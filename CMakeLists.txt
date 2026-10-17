@@ -31,6 +31,11 @@ add_executable(search
   src/main.cpp
   src/corpus.cpp
   src/document.cpp
+  src/tokenizer.cpp
+  src/normalize.cpp
+  src/stopwords.cpp
+  src/stemmer.cpp
+  src/analyzer.cpp
   src/corpus_file.cpp
   src/mapped_file.cpp
 )
