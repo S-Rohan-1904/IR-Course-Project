@@ -1,0 +1,14 @@
+build/
+compile_commands.json
+.cache/
+.DS_Store
+__pycache__/
+*.pyc
+index.bin
+*.idx
+*.corpus
+!tests/fixtures/corpusfile/*.corpus
+corpus/wikipedia/
+corpus/beir/
+*.xml.gz
+*.json.gz
