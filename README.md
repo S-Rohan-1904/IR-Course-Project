@@ -10,7 +10,6 @@ Course project for **CS F469 Information Retrieval**, Group 3.
 | ID | Name |
 |---|---|
 | 2023A7PS0562P | Nainika Kalra |
-| 2023B1A70863P | Prachi Mittal |
 | 2023B2A71017P | Dhayanidhi Purushothaman |
 | 2023B2A70935P | Rohan S |
 
