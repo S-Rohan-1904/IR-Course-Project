@@ -19,60 +19,47 @@
 #include "corpus.hpp"
 #include "corpus_file.hpp"
 #include "crawler.hpp"
-#include "document.hpp"
 #include "fetcher.hpp"
-#include "html.hpp"
 #include "evaluator.hpp"
 #include "index.hpp"
 #include "index_io.hpp"
-#include "normalize.hpp"
 #include "pagerank.hpp"
 #include "query.hpp"
-#include "robots.hpp"
-#include "snippet.hpp"
 #include "ranking.hpp"
 #include "results.hpp"
-#include "thread_pool.hpp"
 #include "url.hpp"
 #include "wiki_import.hpp"
-#include "thread_pool.hpp"
-#include "stemmer.hpp"
-#include "stopwords.hpp"
-#include "tokenizer.hpp"
 
 namespace {
 
 int usage() {
     std::cerr << "usage: search <command> [args...]\n"
                  "\n"
-                 "commands:\n"
-                 "  docs <corpus_dir>            list the document ids in a corpus\n"
-                 "  show <corpus_dir> <doc_id>   print one document's id, title and body\n"
-                 "  tokenize <text>              split text into tokens\n"
-                 "  normalize <token>            reduce one token to its indexed term\n"
-                 "  terms [--drop-stopwords] <text>\n"
-                 "                               tokenize, then normalize\n"
-                 "  stopword <word>              is this word a stopword?\n"
-                 "  stem-info <word>             Porter consonant pattern and measure\n"
-                 "  stem-step <step> <word>      apply one Porter step\n"
-                 "                               (1a, 1b, 1c, 2, 3, 4, 5a, 5b)\n"
-                 "  stem <word>                  reduce a word to its Porter stem\n"
-                 "  analyze <text>               run the full analysis chain\n"
-                 "  analyze-doc <corpus_dir> <doc_id>\n"
-                 "                               analyze one document from disk\n"
-                 "  index-stats <corpus_dir>     document, term and posting counts\n"
-                 "  index-terms <corpus_dir>     every indexed term with its document frequency\n"
-                 "  postings <corpus_dir> <word>  documents containing a word\n"
-                 "  tf <corpus_dir> <word>       per-document counts for a word\n"
-                 "  positions <corpus_dir> <word> token positions of a word per document\n"
-                 "  lex <query>                  split a query into syntactic tokens\n"
-                 "  parse <query>                parse a query into a boolean tree\n"
-                 "  and <corpus_dir> <word>...   documents containing every word\n"
-                 "  or <corpus_dir> <word>...    documents containing any of the words\n"
-                 "  andnot <corpus_dir> <word> <word>\n"
-                 "                               documents containing the first but not the second\n"
-                 "  phrase <corpus_dir> <text>   documents containing the words consecutively\n"
-                 "  match <corpus_dir> <query>   documents matching a boolean query\n"
+                 "preprocessing:\n"
+                 "  wiki-import [--limit <n>] [--abstracts] <dump.json|-> <file>\n"
+                 "                               build a corpus from a Wikipedia CirrusSearch dump\n"
+                 "  beir-import <corpus.jsonl> <file>\n"
+                 "                               build a corpus from a BEIR dataset\n"
+                 "  corpus-write <corpus_dir> <file>\n"
+                 "                               pack a corpus directory into one file\n"
+                 "  crawl [options] <seed_url>   crawl from a seed url\n"
+                 "      --delay <ms>             floor between requests to one host\n"
+                 "      --mirror <dir>           fetch from a mirrored site on disk\n"
+                 "      --out <dir>              write the pages as a corpus\n"
+                 "      --max-pages <n>          stop after n pages\n"
+                 "      --max-depth <n>          follow links at most n deep\n"
+                 "      --user-agent <name>      the name robots.txt is matched against\n"
+                 "      --all-hosts              follow links off the seed host\n"
+                 "  analyze <text>               show the terms the analysis chain produces\n"
+                 "\n"
+                 "indexing:\n"
+                 "  index-write [--encoding <name>] [--threads <n>] <source> <file>\n"
+                 "                               save an index to disk\n"
+                 "  index-size <source>          encoded size under each encoding\n"
+                 "  pagerank [--iterations <n>] [--damping <d>] <links_file>\n"
+                 "                               PageRank over a crawl's link graph\n"
+                 "\n"
+                 "retrieval:\n"
                  "  query [options] <source> <query>\n"
                  "                               ranked results for a boolean query\n"
                  "      --limit <n>              how many results (default 10)\n"
@@ -82,6 +69,10 @@ int usage() {
                  "      --max-chars <n>          how long an excerpt may be\n"
                  "      --tsv                    id and score, tab separated\n"
                  "  repl [options] <source>      read queries until end of input\n"
+                 "\n"
+                 "evaluation:\n"
+                 "  evaluate [--cutoff <k>] [options] <source> <queries.jsonl> <qrels.tsv>\n"
+                 "                               nDCG, precision, recall, F1, MRR, MAP at k\n"
                  "  bench build <source>         measure index construction\n"
                  "  bench query <source> <query_file>\n"
                  "                               measure query latency over a query log\n"
@@ -90,46 +81,8 @@ int usage() {
                  "      --limit <n>              results per query (bench query)\n"
                  "      --repeats <n>            times to run each query\n"
                  "      --snippet [--corpus <p>] measure with excerpts too\n"
-                 "  lengths <corpus_dir>         indexed length of each document\n"
-                 "  tfidf [--threads <n>] <source> <word>...\n"
-                 "                               rank documents by TF-IDF\n"
-                 "  bm25 [--threads <n>] <source> <word>...\n"
-                 "                               rank documents by BM25\n"
-                 "  top [--bm25] [--threads <n>] <source> <k> <word>...\n"
-                 "                               the k highest scoring documents\n"
-                 "  index-write [--encoding <name>] [--threads <n>] <source> <file>\n"
-                 "                               save an index to disk\n"
-                 "  wiki-import [--limit <n>] [--abstracts] <dump.json|-> <file>\n"
-                 "                               build a corpus from a Wikipedia CirrusSearch dump\n"
-                 "  beir-import <corpus.jsonl> <file>\n"
-                 "                               build a corpus from a BEIR dataset\n"
-                 "  evaluate [--cutoff <k>] [options] <source> <queries.jsonl> <qrels.tsv>\n"
-                 "                               nDCG, precision, recall, F1, MRR, MAP at k\n"
-                 "  corpus-write <corpus_dir> <file>\n"
-                 "                               pack a corpus directory into one file\n"
-                 "  index-size <source>          encoded size under each encoding\n"
-                 "  pool-sum <threads> <n>       sum of squares below n, on a thread pool\n"
-                 "  snippet [--max-chars <n>] <corpus_dir> <doc_id> <word>...\n"
-                 "                               an excerpt with the matches marked\n"
-                 "  pagerank [--iterations <n>] [--damping <d>] <links_file>\n"
-                 "                               PageRank over a crawl's link graph\n"
-                 "  url <url>                    normalize a url\n"
-                 "  url-resolve <base> <ref>     resolve a link against a base url\n"
-                 "  robots <file> <agent> <path> is this path allowed?\n"
-                 "  crawl-delay <file> <agent> <floor_ms>\n"
-                 "                               milliseconds to wait between requests\n"
-                 "  html-text <file>             title and visible text of an html file\n"
-                 "  html-links <base> <file>     links from an html file, resolved\n"
-                 "  crawl [options] <seed_url>   crawl from a seed url\n"
-                 "      --delay <ms>             floor between requests to one host\n"
-                 "      --mirror <dir>           fetch from a mirrored site on disk\n"
-                 "      --out <dir>              write the pages as a corpus\n"
-                 "      --max-pages <n>          stop after n pages\n"
-                 "      --max-depth <n>          follow links at most n deep\n"
-                 "      --user-agent <name>      the name robots.txt is matched against\n"
-                 "      --all-hosts              follow links off the seed host\n"
                  "\n"
-                 "<source> is a corpus directory or a saved index file.\n";
+                 "<source> is a corpus directory, a .corpus file or a saved index file.\n";
     return 2;
 }
 
@@ -196,215 +149,10 @@ std::optional<InvertedIndex> open_index(const std::filesystem::path& source,
     return std::nullopt;
 }
 
-int cmd_docs(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    std::string error;
-    const std::unique_ptr<CorpusReader> corpus = open_corpus(args[0], error);
-    if (!corpus) {
-        std::cerr << "search: " << error << "\n";
-        return 1;
-    }
-
-    for (const std::string& id : corpus->document_ids()) {
-        std::cout << id << "\n";
-    }
-    return 0;
-}
-
-int cmd_show(const std::vector<std::string>& args) {
-    if (args.size() != 2) {
-        return usage();
-    }
-
-    const std::string& id = args[1];
-
-    std::string error;
-    const std::unique_ptr<CorpusReader> corpus = open_corpus(args[0], error);
-    if (!corpus) {
-        std::cerr << "search: " << error << "\n";
-        return 1;
-    }
-
-    const std::vector<std::string>& ids = corpus->document_ids();
-    if (std::find(ids.begin(), ids.end(), id) == ids.end()) {
-        std::cerr << "search: no such document: " << id << "\n";
-        return 1;
-    }
-
-    const std::optional<Document> doc = corpus->read(id);
-    if (!doc.has_value()) {
-        std::cerr << "search: malformed document: " << id << "\n";
-        return 1;
-    }
-
-    std::cout << "id: " << doc->id << "\n"
-              << "title: " << doc->title << "\n"
-              << "\n"
-              << doc->body << "\n";
-    return 0;
-}
-
-int cmd_tokenize(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    for (const Token& token : tokenize(args[0])) {
-        std::cout << token.position << " " << token.offset << " " << token.text << "\n";
-    }
-    return 0;
-}
-
-int cmd_normalize(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    std::cout << normalize(args[0]) << "\n";
-    return 0;
-}
-
-int cmd_terms(const std::vector<std::string>& args) {
-    std::vector<std::string> rest = args;
-    bool drop_stopwords = false;
-    if (!rest.empty() && rest.front() == "--drop-stopwords") {
-        drop_stopwords = true;
-        rest.erase(rest.begin());
-    }
-    if (rest.size() != 1) {
-        return usage();
-    }
-
-    std::vector<Token> tokens = normalize_tokens(tokenize(rest[0]));
-    if (drop_stopwords) {
-        tokens = remove_stopwords(std::move(tokens));
-    }
-
-    for (const Token& token : tokens) {
-        std::cout << token.position << " " << token.offset << " " << token.text << "\n";
-    }
-    return 0;
-}
-
-int cmd_stopword(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    std::cout << (is_stopword(normalize(args[0])) ? "yes" : "no") << "\n";
-    return 0;
-}
-
 void print_terms(const std::vector<Token>& tokens) {
     for (const Token& token : tokens) {
         std::cout << token.position << " " << token.offset << " " << token.text << "\n";
     }
-}
-
-void print_document_ids(const InvertedIndex& index, const std::vector<std::size_t>& matches) {
-    const std::vector<std::string>& ids = index.document_ids();
-    for (const std::size_t doc_id : matches) {
-        std::cout << ids[doc_id] << "\n";
-    }
-}
-
-bool literal_doc_ids(const InvertedIndex& index, const std::string& word,
-                     std::vector<std::size_t>& out) {
-    const std::vector<Token> terms = analyze(word);
-    if (terms.size() > 1) {
-        std::cerr << "search: not a single term: " << word << "\n";
-        return false;
-    }
-
-    out.clear();
-    if (!terms.empty()) {
-        for (const Posting& posting : index.postings(terms.front().text)) {
-            out.push_back(posting.doc_id);
-        }
-    }
-    return true;
-}
-
-template <typename Combine>
-int run_set_query(const std::vector<std::string>& args, std::size_t min_words, Combine combine) {
-    if (args.size() < min_words + 1) {
-        return usage();
-    }
-
-    const std::optional<InvertedIndex> opened = open_index(args[0]);
-    if (!opened.has_value()) {
-        return 1;
-    }
-    const InvertedIndex& index = *opened;
-
-    std::vector<std::size_t> result;
-    if (!literal_doc_ids(index, args[1], result)) {
-        return 1;
-    }
-
-    for (std::size_t i = 2; i < args.size(); i++) {
-        std::vector<std::size_t> next;
-        if (!literal_doc_ids(index, args[i], next)) {
-            return 1;
-        }
-        result = combine(result, next);
-    }
-
-    print_document_ids(index, result);
-    return 0;
-}
-
-int cmd_and(const std::vector<std::string>& args) {
-    return run_set_query(args, 2, intersect);
-}
-
-int cmd_or(const std::vector<std::string>& args) {
-    return run_set_query(args, 2, unite);
-}
-
-int cmd_andnot(const std::vector<std::string>& args) {
-    if (args.size() != 3) {
-        return usage();
-    }
-    return run_set_query(args, 2, subtract);
-}
-
-int run_parsed_query(const std::vector<std::string>& args, const std::string& query) {
-    const std::optional<InvertedIndex> opened = open_index(args[0]);
-    if (!opened.has_value()) {
-        return 1;
-    }
-    const InvertedIndex& index = *opened;
-
-    const ParseResult parsed = parse_query(query);
-    if (!parsed.root) {
-        std::cerr << "search: " << parsed.error << "\n";
-        return 1;
-    }
-
-    print_document_ids(index, evaluate(*parsed.root, index));
-    return 0;
-}
-
-int cmd_match(const std::vector<std::string>& args) {
-    if (args.size() != 2) {
-        return usage();
-    }
-    return run_parsed_query(args, args[1]);
-}
-
-int cmd_phrase(const std::vector<std::string>& args) {
-    if (args.size() != 2) {
-        return usage();
-    }
-    if (args[1].find('"') != std::string::npos) {
-        std::cerr << "search: a phrase may not contain a quote\n";
-        return 1;
-    }
-    return run_parsed_query(args, "\"" + args[1] + "\"");
 }
 
 bool read_text_file(const std::filesystem::path& path, std::string& out) {
@@ -1018,160 +766,6 @@ int cmd_pagerank(const std::vector<std::string>& args) {
     return 0;
 }
 
-
-int cmd_snippet(const std::vector<std::string>& args) {
-    std::vector<std::string> rest = args;
-    SnippetOptions options;
-
-    if (rest.size() >= 2 && rest.front() == "--max-chars") {
-        std::size_t max_chars = 0;
-        if (!parse_count(rest[1], max_chars) || max_chars == 0) {
-            std::cerr << "search: max-chars must be a positive integer: " << rest[1] << "\n";
-            return 1;
-        }
-        options.max_chars = max_chars;
-        rest.erase(rest.begin(), rest.begin() + 2);
-    }
-
-    if (rest.size() < 3) {
-        return usage();
-    }
-
-    std::string open_error;
-    const std::unique_ptr<CorpusReader> corpus = open_corpus(rest[0], open_error);
-    if (!corpus) {
-        std::cerr << "search: " << open_error << "\n";
-        return 1;
-    }
-
-    const std::optional<Document> doc = corpus->read(rest[1]);
-    if (!doc.has_value()) {
-        std::cerr << "search: no such document: " << rest[1] << "\n";
-        return 1;
-    }
-
-    const std::vector<std::string> terms =
-        query_terms(std::vector<std::string>(rest.begin() + 2, rest.end()));
-
-    std::cout << make_snippet(doc->title + "\n\n" + doc->body, terms, options) << "\n";
-    return 0;
-}
-
-
-
-int cmd_url(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    const std::optional<Url> url = parse_url(args[0]);
-    if (!url.has_value()) {
-        std::cerr << "search: not an http url: " << args[0] << "\n";
-        return 1;
-    }
-
-    std::cout << url_to_string(*url) << "\n";
-    return 0;
-}
-
-int cmd_url_resolve(const std::vector<std::string>& args) {
-    if (args.size() != 2) {
-        return usage();
-    }
-
-    const std::optional<Url> base = parse_url(args[0]);
-    if (!base.has_value()) {
-        std::cerr << "search: not an http url: " << args[0] << "\n";
-        return 1;
-    }
-
-    const std::optional<Url> resolved = resolve_url(*base, args[1]);
-    if (!resolved.has_value()) {
-        std::cerr << "search: cannot resolve: " << args[1] << "\n";
-        return 1;
-    }
-
-    std::cout << url_to_string(*resolved) << "\n";
-    return 0;
-}
-
-int cmd_robots(const std::vector<std::string>& args) {
-    if (args.size() != 3) {
-        return usage();
-    }
-
-    std::string text;
-    if (!read_text_file(args[0], text)) {
-        return 1;
-    }
-
-    const RobotsRules rules = RobotsRules::parse(text, args[1]);
-    std::cout << (rules.allows(args[2]) ? "allow" : "disallow") << "\n";
-    return 0;
-}
-
-int cmd_html_text(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    std::string text;
-    if (!read_text_file(args[0], text)) {
-        return 1;
-    }
-
-    const HtmlPage page = parse_html(text);
-    std::cout << "title: " << page.title << "\n" << page.text << "\n";
-    return 0;
-}
-
-int cmd_html_links(const std::vector<std::string>& args) {
-    if (args.size() != 2) {
-        return usage();
-    }
-
-    const std::optional<Url> base = parse_url(args[0]);
-    if (!base.has_value()) {
-        std::cerr << "search: not an http url: " << args[0] << "\n";
-        return 1;
-    }
-
-    std::string text;
-    if (!read_text_file(args[1], text)) {
-        return 1;
-    }
-
-    for (const std::string& href : parse_html(text).links) {
-        const std::optional<Url> resolved = resolve_url(*base, href);
-        if (resolved.has_value()) {
-            std::cout << url_to_string(*resolved) << "\n";
-        }
-    }
-    return 0;
-}
-
-int cmd_crawl_delay(const std::vector<std::string>& args) {
-    if (args.size() != 3) {
-        return usage();
-    }
-
-    std::string text;
-    if (!read_text_file(args[0], text)) {
-        return 1;
-    }
-
-    std::size_t floor = 0;
-    if (!parse_count(args[2], floor)) {
-        std::cerr << "search: floor must be a non-negative integer: " << args[2] << "\n";
-        return 1;
-    }
-
-    const RobotsRules rules = RobotsRules::parse(text, args[1]);
-    std::cout << delay_for(rules, std::chrono::milliseconds(static_cast<long long>(floor))).count()
-              << "\n";
-    return 0;
-}
-
 int cmd_crawl(const std::vector<std::string>& args) {
     std::vector<std::string> rest = args;
     CrawlOptions options;
@@ -1258,40 +852,6 @@ int cmd_crawl(const std::vector<std::string>& args) {
     return 0;
 }
 
-int cmd_pool_sum(const std::vector<std::string>& args) {
-    if (args.size() != 2) {
-        return usage();
-    }
-
-    std::size_t threads = 0;
-    std::size_t count = 0;
-    if (!parse_count(args[0], threads) || threads == 0) {
-        std::cerr << "search: threads must be a positive integer: " << args[0] << "\n";
-        return 1;
-    }
-    if (!parse_count(args[1], count)) {
-        std::cerr << "search: count must be a non-negative integer: " << args[1] << "\n";
-        return 1;
-    }
-
-    ThreadPool pool(threads);
-    std::vector<std::future<std::size_t>> pending;
-    pending.reserve(count);
-    for (std::size_t i = 0; i < count; i++) {
-        pending.push_back(pool.submit([i] { return i * i; }));
-    }
-
-    std::size_t total = 0;
-    for (std::future<std::size_t>& future : pending) {
-        total += future.get();
-    }
-
-    std::cout << "threads " << pool.size() << "\n"
-              << "tasks " << count << "\n"
-              << "sum " << total << "\n";
-    return 0;
-}
-
 int cmd_index_write(const std::vector<std::string>& args) {
     std::vector<std::string> rest = args;
     IndexEncoding encoding = IndexEncoding::VarByte;
@@ -1362,333 +922,12 @@ int cmd_index_size(const std::vector<std::string>& args) {
     return 0;
 }
 
-int cmd_lengths(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    const std::optional<InvertedIndex> opened = open_index(args[0]);
-    if (!opened.has_value()) {
-        return 1;
-    }
-    const InvertedIndex& index = *opened;
-
-    const std::vector<std::string>& ids = index.document_ids();
-    for (std::size_t doc_id = 0; doc_id < ids.size(); doc_id++) {
-        std::cout << ids[doc_id] << " " << index.document_length(doc_id) << "\n";
-    }
-
-    std::cout << "average " << std::fixed << std::setprecision(2)
-              << index.average_document_length() << "\n";
-    return 0;
-}
-
-void print_ranking(const InvertedIndex& index, const std::vector<ScoredDocument>& ranking) {
-    const std::vector<std::string>& ids = index.document_ids();
-    std::cout << std::fixed << std::setprecision(4);
-    for (const ScoredDocument& scored : ranking) {
-        std::cout << ids[scored.doc_id] << " " << scored.score << "\n";
-    }
-}
-
-int run_ranking(const std::vector<std::string>& args, Scorer scorer) {
-    std::vector<std::string> rest = args;
-    std::size_t threads = 1;
-    if (!take_threads(rest, threads)) {
-        return 1;
-    }
-    if (rest.size() < 2) {
-        return usage();
-    }
-
-    const std::optional<InvertedIndex> opened = open_index(rest[0], threads);
-    if (!opened.has_value()) {
-        return 1;
-    }
-    const InvertedIndex& index = *opened;
-
-    const std::vector<std::string> terms =
-        query_terms(std::vector<std::string>(rest.begin() + 1, rest.end()));
-
-    print_ranking(index, score(terms, index, scorer, threads));
-    return 0;
-}
-
-int cmd_tfidf(const std::vector<std::string>& args) {
-    return run_ranking(args, Scorer::TfIdf);
-}
-
-int cmd_bm25(const std::vector<std::string>& args) {
-    return run_ranking(args, Scorer::Bm25);
-}
-
-int cmd_top(const std::vector<std::string>& args) {
-    std::vector<std::string> rest = args;
-    bool use_bm25 = false;
-    if (!rest.empty() && rest.front() == "--bm25") {
-        use_bm25 = true;
-        rest.erase(rest.begin());
-    }
-    std::size_t threads = 1;
-    if (!take_threads(rest, threads)) {
-        return 1;
-    }
-    if (rest.size() < 3) {
-        return usage();
-    }
-
-    const std::optional<InvertedIndex> opened = open_index(rest[0], threads);
-    if (!opened.has_value()) {
-        return 1;
-    }
-    const InvertedIndex& index = *opened;
-
-    std::size_t k = 0;
-    if (!parse_count(rest[1], k)) {
-        std::cerr << "search: k must be a non-negative integer: " << rest[1] << "\n";
-        return 1;
-    }
-
-    const std::vector<std::string> terms =
-        query_terms(std::vector<std::string>(rest.begin() + 2, rest.end()));
-
-    const std::vector<ScoredDocument> ranking =
-        score(terms, index, use_bm25 ? Scorer::Bm25 : Scorer::TfIdf, threads);
-
-    print_ranking(index, top_k(ranking, k));
-    return 0;
-}
-
-int cmd_lex(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    std::vector<QueryToken> tokens;
-    std::string error;
-    if (!lex_query(args[0], tokens, error)) {
-        std::cerr << "search: " << error << "\n";
-        return 1;
-    }
-
-    for (const QueryToken& token : tokens) {
-        switch (token.kind) {
-        case QueryTokenKind::Term:   std::cout << "term " << token.text << "\n"; break;
-        case QueryTokenKind::Phrase: std::cout << "phrase " << token.text << "\n"; break;
-        case QueryTokenKind::And:    std::cout << "and\n"; break;
-        case QueryTokenKind::Or:     std::cout << "or\n"; break;
-        case QueryTokenKind::Not:    std::cout << "not\n"; break;
-        case QueryTokenKind::LParen: std::cout << "lparen\n"; break;
-        case QueryTokenKind::RParen: std::cout << "rparen\n"; break;
-        }
-    }
-    return 0;
-}
-
-int cmd_parse(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    const ParseResult result = parse_query(args[0]);
-    if (!result.root) {
-        std::cerr << "search: " << result.error << "\n";
-        return 1;
-    }
-
-    std::cout << to_sexpr(*result.root) << "\n";
-    return 0;
-}
-
-template <typename Emit>
-int run_term_query(const std::vector<std::string>& args, Emit emit) {
-    if (args.size() != 2) {
-        return usage();
-    }
-
-    const std::optional<InvertedIndex> opened = open_index(args[0]);
-    if (!opened.has_value()) {
-        return 1;
-    }
-    const InvertedIndex& index = *opened;
-
-    const std::vector<Token> query = analyze(args[1]);
-    if (query.size() > 1) {
-        std::cerr << "search: not a single term: " << args[1] << "\n";
-        return 1;
-    }
-    if (query.empty()) {
-        return 0;
-    }
-
-    const std::vector<std::string>& ids = index.document_ids();
-    for (const Posting& posting : index.postings(query.front().text)) {
-        emit(ids[posting.doc_id], posting);
-    }
-    return 0;
-}
-
-int cmd_postings(const std::vector<std::string>& args) {
-    return run_term_query(args, [](const std::string& id, const Posting&) {
-        std::cout << id << "\n";
-    });
-}
-
-int cmd_tf(const std::vector<std::string>& args) {
-    return run_term_query(args, [](const std::string& id, const Posting& posting) {
-        std::cout << id << " " << posting.frequency << "\n";
-    });
-}
-
-int cmd_positions(const std::vector<std::string>& args) {
-    return run_term_query(args, [](const std::string& id, const Posting& posting) {
-        std::cout << id;
-        for (const std::size_t position : posting.positions) {
-            std::cout << " " << position;
-        }
-        std::cout << "\n";
-    });
-}
-
-int cmd_index_stats(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    const std::optional<InvertedIndex> opened = open_index(args[0]);
-    if (!opened.has_value()) {
-        return 1;
-    }
-    const InvertedIndex& index = *opened;
-
-    std::cout << "documents: " << index.document_count() << "\n"
-              << "terms: " << index.term_count() << "\n"
-              << "postings: " << index.posting_count() << "\n";
-    return 0;
-}
-
-int cmd_index_terms(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    const std::optional<InvertedIndex> opened = open_index(args[0]);
-    if (!opened.has_value()) {
-        return 1;
-    }
-    const InvertedIndex& index = *opened;
-
-    for (const std::string& term : index.terms()) {
-        std::cout << term << " " << index.document_frequency(term) << "\n";
-    }
-    return 0;
-}
-
 int cmd_analyze(const std::vector<std::string>& args) {
     if (args.size() != 1) {
         return usage();
     }
 
     print_terms(analyze(args[0]));
-    return 0;
-}
-
-int cmd_analyze_doc(const std::vector<std::string>& args) {
-    if (args.size() != 2) {
-        return usage();
-    }
-
-    const std::string& id = args[1];
-
-    std::string error;
-    const std::unique_ptr<CorpusReader> corpus = open_corpus(args[0], error);
-    if (!corpus) {
-        std::cerr << "search: " << error << "\n";
-        return 1;
-    }
-
-    const std::optional<Document> doc = corpus->read(id);
-    if (!doc.has_value()) {
-        std::cerr << "search: no such document: " << id << "\n";
-        return 1;
-    }
-
-    print_terms(analyze_document(*doc));
-    return 0;
-}
-
-int cmd_stem(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    std::cout << porter::stem(args[0]) << "\n";
-    return 0;
-}
-
-int cmd_stem_step(const std::vector<std::string>& args) {
-    if (args.size() != 2) {
-        return usage();
-    }
-
-    const std::string& step = args[0];
-    const std::string& word = args[1];
-
-    if (step == "1a") {
-        std::cout << porter::step_1a_plurals(word) << "\n";
-        return 0;
-    }
-    if (step == "1b") {
-        std::cout << porter::step_1b_verb_endings(word) << "\n";
-        return 0;
-    }
-    if (step == "1c") {
-        std::cout << porter::step_1c_y_to_i(word) << "\n";
-        return 0;
-    }
-    if (step == "2") {
-        std::cout << porter::step_2_double_suffixes(word) << "\n";
-        return 0;
-    }
-    if (step == "3") {
-        std::cout << porter::step_3_derived_suffixes(word) << "\n";
-        return 0;
-    }
-    if (step == "4") {
-        std::cout << porter::step_4_residual_suffixes(word) << "\n";
-        return 0;
-    }
-    if (step == "5a") {
-        std::cout << porter::step_5a_final_e(word) << "\n";
-        return 0;
-    }
-    if (step == "5b") {
-        std::cout << porter::step_5b_double_l(word) << "\n";
-        return 0;
-    }
-
-    std::cerr << "search: unknown stemmer step: " << step << "\n";
-    return 1;
-}
-
-int cmd_stem_info(const std::vector<std::string>& args) {
-    if (args.size() != 1) {
-        return usage();
-    }
-
-    const std::string& word = args[0];
-
-    std::string pattern;
-    pattern.reserve(word.size());
-    for (std::size_t i = 0; i < word.size(); ++i) {
-        pattern.push_back(porter::is_consonant(word, i) ? 'C' : 'V');
-    }
-
-    std::cout << "pattern: " << pattern << "\n"
-              << "measure: " << porter::measure(word) << "\n"
-              << "vowel: " << (porter::contains_vowel(word) ? "yes" : "no") << "\n"
-              << "double: " << (porter::ends_with_double_consonant(word) ? "yes" : "no") << "\n"
-              << "cvc: " << (porter::ends_cvc(word) ? "yes" : "no") << "\n";
     return 0;
 }
 
@@ -1703,80 +942,29 @@ int main(int argc, char** argv) {
     const std::string command = args[0];
     const std::vector<std::string> rest(args.begin() + 1, args.end());
 
-    if (command == "docs") {
-        return cmd_docs(rest);
-    }
-    if (command == "show") {
-        return cmd_show(rest);
-    }
-    if (command == "tokenize") {
-        return cmd_tokenize(rest);
-    }
-    if (command == "normalize") {
-        return cmd_normalize(rest);
-    }
-    if (command == "terms") {
-        return cmd_terms(rest);
-    }
-    if (command == "stopword") {
-        return cmd_stopword(rest);
-    }
-    if (command == "stem-info") {
-        return cmd_stem_info(rest);
-    }
-    if (command == "stem") {
-        return cmd_stem(rest);
-    }
-    if (command == "analyze") {
-        return cmd_analyze(rest);
-    }
-    if (command == "index-stats") {
-        return cmd_index_stats(rest);
-    }
-    if (command == "index-terms") {
-        return cmd_index_terms(rest);
-    }
-    if (command == "postings") {
-        return cmd_postings(rest);
-    }
-    if (command == "tf") {
-        return cmd_tf(rest);
-    }
-    if (command == "positions") {
-        return cmd_positions(rest);
-    }
-    if (command == "lex") {
-        return cmd_lex(rest);
-    }
-    if (command == "parse") {
-        return cmd_parse(rest);
-    }
-    if (command == "and") {
-        return cmd_and(rest);
-    }
-    if (command == "or") {
-        return cmd_or(rest);
-    }
-    if (command == "andnot") {
-        return cmd_andnot(rest);
-    }
-    if (command == "phrase") {
-        return cmd_phrase(rest);
-    }
-    if (command == "match") {
-        return cmd_match(rest);
-    }
-    if (command == "lengths") {
-        return cmd_lengths(rest);
-    }
     if (command == "wiki-import") {
         return cmd_wiki_import(rest);
+    }
+    if (command == "beir-import") {
+        return cmd_beir_import(rest);
     }
     if (command == "corpus-write") {
         return cmd_corpus_write(rest);
     }
-    if (command == "bench") {
-        return cmd_bench(rest);
+    if (command == "crawl") {
+        return cmd_crawl(rest);
+    }
+    if (command == "analyze") {
+        return cmd_analyze(rest);
+    }
+    if (command == "index-write") {
+        return cmd_index_write(rest);
+    }
+    if (command == "index-size") {
+        return cmd_index_size(rest);
+    }
+    if (command == "pagerank") {
+        return cmd_pagerank(rest);
     }
     if (command == "query") {
         return cmd_query(rest);
@@ -1784,62 +972,11 @@ int main(int argc, char** argv) {
     if (command == "repl") {
         return cmd_repl(rest);
     }
-    if (command == "pagerank") {
-        return cmd_pagerank(rest);
-    }
-    if (command == "snippet") {
-        return cmd_snippet(rest);
-    }
-    if (command == "url") {
-        return cmd_url(rest);
-    }
-    if (command == "url-resolve") {
-        return cmd_url_resolve(rest);
-    }
-    if (command == "robots") {
-        return cmd_robots(rest);
-    }
-    if (command == "html-text") {
-        return cmd_html_text(rest);
-    }
-    if (command == "html-links") {
-        return cmd_html_links(rest);
-    }
-    if (command == "crawl-delay") {
-        return cmd_crawl_delay(rest);
-    }
-    if (command == "crawl") {
-        return cmd_crawl(rest);
-    }
-    if (command == "pool-sum") {
-        return cmd_pool_sum(rest);
-    }
-    if (command == "index-write") {
-        return cmd_index_write(rest);
-    }
-    if (command == "beir-import") {
-        return cmd_beir_import(rest);
-    }
     if (command == "evaluate") {
         return cmd_evaluate(rest);
     }
-    if (command == "index-size") {
-        return cmd_index_size(rest);
-    }
-    if (command == "tfidf") {
-        return cmd_tfidf(rest);
-    }
-    if (command == "bm25") {
-        return cmd_bm25(rest);
-    }
-    if (command == "top") {
-        return cmd_top(rest);
-    }
-    if (command == "analyze-doc") {
-        return cmd_analyze_doc(rest);
-    }
-    if (command == "stem-step") {
-        return cmd_stem_step(rest);
+    if (command == "bench") {
+        return cmd_bench(rest);
     }
 
     std::cerr << "search: unknown command: " << command << "\n";

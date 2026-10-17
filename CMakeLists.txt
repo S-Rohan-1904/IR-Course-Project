@@ -64,7 +64,7 @@ target_include_directories(search PRIVATE src)
 target_link_libraries(search PRIVATE Threads::Threads)
 
 # HTTP fetching is optional: without libcurl the crawler still runs against a
-# mirrored site on disk, which is what the tests use.
+# mirrored site on disk.
 if(CURL_FOUND)
   target_link_libraries(search PRIVATE CURL::libcurl)
   target_compile_definitions(search PRIVATE SEARCH_HAVE_CURL)

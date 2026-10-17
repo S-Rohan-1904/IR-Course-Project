@@ -1,3 +1,0 @@
-title: zulu
-
-A tiny document named zulu.

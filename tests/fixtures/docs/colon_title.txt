@@ -1,3 +1,0 @@
-title: Ratio: 3:1
-
-Aspect ratios and colons.

@@ -9,36 +9,26 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-## Test
-
-```bash
-python3 tests/runner.py
-```
-
 ## Benchmark
 
 ```bash
 ./tools/bench.sh <corpus> [query_file]
 
-./tools/bench.sh corpus/fixtures tests/fixtures/queries/basic.txt   # ~5s, sanity check
-./tools/bench.sh corpus/wikipedia/simplewiki.corpus                 # ~4 min, full table
+./tools/bench.sh corpus/fixtures queries/fixtures.txt   # ~5s, sanity check
+./tools/bench.sh corpus/wikipedia/simplewiki.corpus     # ~4 min, full table
 ```
 
 Prints build time at one and all threads, the phase breakdown, compression,
 query p50/p95/p99, and peak memory.
 
-## Analyze a query set
+## Inspect the analysis chain
 
 ```bash
-./tools/analyze.py <index> [query_file] [--limit N] [--repeats N] [--scorer bm25|tfidf]
-
-./tools/analyze.py corpus/wikipedia/simplewiki.idx
-./tools/analyze.py corpus/wikipedia/simplewiki.idx my_queries.txt --limit 20
+./build/search analyze 'The Cats were Running'
 ```
 
-Per-query latency and result counts, which queries returned nothing, score
-distribution, latency histogram. Needs a built index (`.idx`), not a `.corpus`
-file, pass the corpus and it will just answer slowly by rebuilding first.
+Prints position, byte offset and final term for each token that survives
+tokenization, normalization, stopword removal and stemming.
 
 ## Build an index
 

@@ -28,12 +28,12 @@ $ ./build/search query --snippet simplewiki.idx 'solar system'
 frontier with URL normalization and a seen set, HTML to text extraction,
 per-host rate limiting, content-hash duplicate detection, and a link graph
 written out for link analysis. Without libcurl the crawler still runs against a
-mirrored site on disk, which is what the tests use.
+mirrored site on disk.
 
 **Text analysis.** Tokenizer that records the byte offset of every token,
 Unicode-aware normalization that folds Latin-1 and Latin Extended-A to ASCII
 (`Zürich` becomes `zurich`), stopword removal, and a Porter stemmer implemented
-step by step with each step addressable from the command line.
+step by step. `search analyze` prints what the whole chain produces for a text.
 
 **Index.** Positional inverted index: document id, term frequency and token
 positions per posting. Delta encoded and variable-byte compressed. Built in
@@ -65,7 +65,7 @@ compression claim is checkable rather than asserted.
 
 ## Status
 
-Implemented and tested: crawler, text analysis, positional index, compression,
+Implemented: crawler, text analysis, positional index, compression,
 memory-mapped index format, parallel build, boolean and phrase queries, TF-IDF
 and BM25 ranking, snippets, PageRank as a standalone stage, BEIR evaluation and
 the benchmark harness.
@@ -85,15 +85,12 @@ Still to do:
 
 ## Building
 
-Needs CMake 3.20 or newer, a C++20 compiler, and Python 3. libcurl is optional.
+Needs CMake 3.20 or newer and a C++20 compiler. libcurl is optional.
 
 ```console
 $ cmake -S . -B build && cmake --build build -j
-$ python3 tests/runner.py
 ```
 
-The tests are end-to-end: each case runs the real binary and compares its
-output, so nothing passes because a mock agreed with it.
-
 [SETUP.md](SETUP.md) goes from a fresh clone to a Wikipedia index.
-[COMMANDS.md](COMMANDS.md) lists every command.
+[COMMANDS.md](COMMANDS.md) lists the common commands; `./build/search` with no
+arguments prints all of them.

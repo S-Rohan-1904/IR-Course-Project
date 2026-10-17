@@ -14,7 +14,6 @@ Everything below takes about twenty minutes, most of it downloading Wikipedia.
 | CMake | 3.20 or newer |
 | A C++20 compiler | GCC 12+, Clang 15+, or Apple Clang 15+ |
 | libcurl | optional, only the crawler needs it |
-| Python 3 | 3.9+, for the test runner and the analytics script |
 
 Without libcurl the build still succeeds; the crawler then works against
 already-downloaded pages and cannot fetch over HTTP. Nothing else is affected.
@@ -28,7 +27,7 @@ brew install cmake curl
 Debian or Ubuntu:
 
 ```bash
-sudo apt install cmake g++ libcurl4-openssl-dev python3
+sudo apt install cmake g++ libcurl4-openssl-dev
 ```
 
 ## 2. Build
@@ -71,21 +70,7 @@ cmake --build build -j
 Both of these look like project bugs and are not. Check the toolchain before
 the code.
 
-## 3. Run the tests
-
-```bash
-python3 tests/runner.py
-```
-
-```
-All 810 checks passing.
-```
-
-These are end-to-end: each case runs the real binary and compares its output.
-Nothing passes because a mock agreed with it. If this passes, the build is
-good.
-
-## 4. A first index, in ten seconds
+## 3. A first index, in ten seconds
 
 The repository ships a 30-document corpus, so you can try everything before
 downloading anything.
@@ -99,7 +84,7 @@ downloading anything.
 In the REPL, `:help` lists what it understands. Queries take `AND`, `OR`,
 `NOT`, parentheses and `"quoted phrases"`.
 
-## 5. A real corpus: Simple English Wikipedia
+## 4. A real corpus: Simple English Wikipedia
 
 About 600 MB downloaded, 400 MB after import, 188 MB as an index.
 
@@ -155,7 +140,7 @@ found automatically if it sits beside the index under the same name
 (`simplewiki.idx` next to `simplewiki.corpus`), or you can say where it is with
 `--corpus`.
 
-## 6. Reproduce the benchmarks
+## 5. Reproduce the benchmarks
 
 ```bash
 ./tools/bench.sh corpus/wikipedia/simplewiki.corpus
@@ -168,32 +153,14 @@ Takes about four minutes on the Wikipedia corpus. Try it on the fixtures first
 to see the shape of the output:
 
 ```bash
-./tools/bench.sh corpus/fixtures tests/fixtures/queries/basic.txt
+./tools/bench.sh corpus/fixtures queries/fixtures.txt
 ```
 
 Your numbers will differ from ours, since the machine and the dump differ. The
 relationships are what should hold: startup should be milliseconds rather than
 seconds, and the parallel build should beat the single-threaded one.
 
-## 7. Analyse a query set
-
-```bash
-./tools/analyze.py corpus/wikipedia/simplewiki.idx
-./tools/analyze.py simplewiki.idx my_queries.txt --limit 20 --scorer tfidf
-```
-
-Where `bench.sh` answers "how fast", this answers "how fast, and what came
-back": per-query latency, how many results each query found, which found
-nothing, the score distribution, and the weakest top results.
-
-It reports wall clock per invocation *including process startup*, which is what
-you actually wait for at a terminal, and which is deliberately a different
-number from the in-process figure `bench query` reports.
-
-The query file is one query per line; `#` is not special, so anything on a line
-is a query.
-
-## 8. Measure relevance
+## 6. Measure relevance
 
 The ranking is scored against [BEIR](https://github.com/beir-cellar/beir),
 whose corpora, queries and relevance judgements are public and independent, and
@@ -238,7 +205,7 @@ baseline for it is 0.665.
 TREC-COVID (`trec-covid.zip`, 74 MB, 171,331 documents) works the same way and
 is the next dataset we plan to score.
 
-## 9. Crawling
+## 7. Crawling
 
 If libcurl was found at build time:
 
@@ -255,14 +222,10 @@ own sites, or at ones whose terms permit it.
 
 ```
 src/          the engine, one concern per file pair
-tests/
-  runner.py   the test runner
-  cases/      one file per feature, each case an argv and expected output
-  fixtures/   small corpora, indexes and query logs
+queries/      query logs for the benchmark
 tools/
-  bench.sh          the benchmark table
-  analyze.py        query-set analytics
-  fetch_wikipedia.sh
+  bench.sh            the benchmark table
+  fetch_wikipedia.sh  download and import a Wikipedia dump
 corpus/
   fixtures/   the 30-document corpus, checked in
   wikipedia/  gitignored
@@ -270,4 +233,4 @@ corpus/
 ```
 
 Corpora and indexes are gitignored. Nothing large is in the repository, and
-nothing in it needs the network to build or test.
+nothing in it needs the network to build.

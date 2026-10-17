@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CORPUS="${1:-corpus/fixtures}"
-QUERIES="${2:-tests/fixtures/queries/wikipedia.txt}"
+QUERIES="${2:-queries/wikipedia.txt}"
 BIN=./build/search
 
 if [ ! -x "$BIN" ]; then

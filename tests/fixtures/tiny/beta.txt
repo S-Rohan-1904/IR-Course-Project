@@ -1,3 +1,0 @@
-title: Beta Document
-
-The second tiny document mentions a dog.

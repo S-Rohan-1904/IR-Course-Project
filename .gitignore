@@ -7,7 +7,6 @@ __pycache__/
 index.bin
 *.idx
 *.corpus
-!tests/fixtures/corpusfile/*.corpus
 corpus/wikipedia/
 corpus/beir/
 *.xml.gz
