@@ -36,9 +36,12 @@ add_executable(search
   src/stopwords.cpp
   src/stemmer.cpp
   src/analyzer.cpp
+  src/index.cpp
+  src/index_io.cpp
   src/thread_pool.cpp
   src/corpus_file.cpp
   src/mapped_file.cpp
+  src/index_map.cpp
 )
 
 target_include_directories(search PRIVATE src)

@@ -17,6 +17,8 @@
 #include "corpus.hpp"
 #include "corpus_file.hpp"
 #include "document.hpp"
+#include "index.hpp"
+#include "index_io.hpp"
 #include "normalize.hpp"
 #include "thread_pool.hpp"
 #include "thread_pool.hpp"
@@ -44,6 +46,11 @@ int usage() {
                  "  analyze <text>               run the full analysis chain\n"
                  "  analyze-doc <corpus_dir> <doc_id>\n"
                  "                               analyze one document from disk\n"
+                 "  index-stats <corpus_dir>     document, term and posting counts\n"
+                 "  index-terms <corpus_dir>     every indexed term with its document frequency\n"
+                 "  postings <corpus_dir> <word>  documents containing a word\n"
+                 "  tf <corpus_dir> <word>       per-document counts for a word\n"
+                 "  positions <corpus_dir> <word> token positions of a word per document\n"
                  "      --limit <n>              how many results (default 10)\n"
                  "      --scorer bm25|tfidf      which ranking function\n"
                  "      --snippet                show an excerpt under each result\n"
@@ -57,6 +64,7 @@ int usage() {
                  "      --limit <n>              results per query (bench query)\n"
                  "      --repeats <n>            times to run each query\n"
                  "      --snippet [--corpus <p>] measure with excerpts too\n"
+                 "  lengths <corpus_dir>         indexed length of each document\n"
                  "  corpus-write <corpus_dir> <file>\n"
                  "                               pack a corpus directory into one file\n"
                  "  pool-sum <threads> <n>       sum of squares below n, on a thread pool\n"
@@ -111,6 +119,29 @@ bool looks_like_corpus_file(const std::filesystem::path& path) {
            magic[2] == 'P' && magic[3] == 'S';
 }
 
+std::optional<InvertedIndex> open_index(const std::filesystem::path& source,
+                                        std::size_t threads = 1) {
+    std::error_code ec;
+    if (std::filesystem::is_directory(source, ec)) {
+        return build_index_parallel(source, threads);
+    }
+
+    if (std::filesystem::is_regular_file(source, ec)) {
+        if (looks_like_corpus_file(source)) {
+            return build_index_parallel(source, threads);
+        }
+
+        std::string error;
+        std::optional<InvertedIndex> index = read_index_file(source, error);
+        if (!index.has_value()) {
+            std::cerr << "search: " << error << "\n";
+        }
+        return index;
+    }
+
+    reject_missing_corpus(source);
+    return std::nullopt;
+}
 
 int cmd_docs(const std::vector<std::string>& args) {
     if (args.size() != 1) {
@@ -220,8 +251,58 @@ void print_terms(const std::vector<Token>& tokens) {
     }
 }
 
+void print_document_ids(const InvertedIndex& index, const std::vector<std::size_t>& matches) {
+    const std::vector<std::string>& ids = index.document_ids();
+    for (const std::size_t doc_id : matches) {
+        std::cout << ids[doc_id] << "\n";
+    }
+}
 
+bool literal_doc_ids(const InvertedIndex& index, const std::string& word,
+                     std::vector<std::size_t>& out) {
+    const std::vector<Token> terms = analyze(word);
+    if (terms.size() > 1) {
+        std::cerr << "search: not a single term: " << word << "\n";
+        return false;
+    }
 
+    out.clear();
+    if (!terms.empty()) {
+        for (const Posting& posting : index.postings(terms.front().text)) {
+            out.push_back(posting.doc_id);
+        }
+    }
+    return true;
+}
+
+template <typename Combine>
+int run_set_query(const std::vector<std::string>& args, std::size_t min_words, Combine combine) {
+    if (args.size() < min_words + 1) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(args[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+    const InvertedIndex& index = *opened;
+
+    std::vector<std::size_t> result;
+    if (!literal_doc_ids(index, args[1], result)) {
+        return 1;
+    }
+
+    for (std::size_t i = 2; i < args.size(); i++) {
+        std::vector<std::size_t> next;
+        if (!literal_doc_ids(index, args[i], next)) {
+            return 1;
+        }
+        result = combine(result, next);
+    }
+
+    print_document_ids(index, result);
+    return 0;
+}
 
 
 
@@ -327,6 +408,26 @@ int cmd_pool_sum(const std::vector<std::string>& args) {
 
 
 
+int cmd_lengths(const std::vector<std::string>& args) {
+    if (args.size() != 1) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(args[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+    const InvertedIndex& index = *opened;
+
+    const std::vector<std::string>& ids = index.document_ids();
+    for (std::size_t doc_id = 0; doc_id < ids.size(); doc_id++) {
+        std::cout << ids[doc_id] << " " << index.document_length(doc_id) << "\n";
+    }
+
+    std::cout << "average " << std::fixed << std::setprecision(2)
+              << index.average_document_length() << "\n";
+    return 0;
+}
 
 
 
@@ -335,11 +436,89 @@ int cmd_pool_sum(const std::vector<std::string>& args) {
 
 
 
+template <typename Emit>
+int run_term_query(const std::vector<std::string>& args, Emit emit) {
+    if (args.size() != 2) {
+        return usage();
+    }
 
+    const std::optional<InvertedIndex> opened = open_index(args[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+    const InvertedIndex& index = *opened;
 
+    const std::vector<Token> query = analyze(args[1]);
+    if (query.size() > 1) {
+        std::cerr << "search: not a single term: " << args[1] << "\n";
+        return 1;
+    }
+    if (query.empty()) {
+        return 0;
+    }
 
+    const std::vector<std::string>& ids = index.document_ids();
+    for (const Posting& posting : index.postings(query.front().text)) {
+        emit(ids[posting.doc_id], posting);
+    }
+    return 0;
+}
 
+int cmd_postings(const std::vector<std::string>& args) {
+    return run_term_query(args, [](const std::string& id, const Posting&) {
+        std::cout << id << "\n";
+    });
+}
 
+int cmd_tf(const std::vector<std::string>& args) {
+    return run_term_query(args, [](const std::string& id, const Posting& posting) {
+        std::cout << id << " " << posting.frequency << "\n";
+    });
+}
+
+int cmd_positions(const std::vector<std::string>& args) {
+    return run_term_query(args, [](const std::string& id, const Posting& posting) {
+        std::cout << id;
+        for (const std::size_t position : posting.positions) {
+            std::cout << " " << position;
+        }
+        std::cout << "\n";
+    });
+}
+
+int cmd_index_stats(const std::vector<std::string>& args) {
+    if (args.size() != 1) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(args[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+    const InvertedIndex& index = *opened;
+
+    std::cout << "documents: " << index.document_count() << "\n"
+              << "terms: " << index.term_count() << "\n"
+              << "postings: " << index.posting_count() << "\n";
+    return 0;
+}
+
+int cmd_index_terms(const std::vector<std::string>& args) {
+    if (args.size() != 1) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(args[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+    const InvertedIndex& index = *opened;
+
+    for (const std::string& term : index.terms()) {
+        std::cout << term << " " << index.document_frequency(term) << "\n";
+    }
+    return 0;
+}
 
 int cmd_analyze(const std::vector<std::string>& args) {
     if (args.size() != 1) {
@@ -486,6 +665,24 @@ int main(int argc, char** argv) {
     }
     if (command == "analyze") {
         return cmd_analyze(rest);
+    }
+    if (command == "index-stats") {
+        return cmd_index_stats(rest);
+    }
+    if (command == "index-terms") {
+        return cmd_index_terms(rest);
+    }
+    if (command == "postings") {
+        return cmd_postings(rest);
+    }
+    if (command == "tf") {
+        return cmd_tf(rest);
+    }
+    if (command == "positions") {
+        return cmd_positions(rest);
+    }
+    if (command == "lengths") {
+        return cmd_lengths(rest);
     }
     if (command == "corpus-write") {
         return cmd_corpus_write(rest);
