@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "analyzer.hpp"
+#include "beir.hpp"
 #include "corpus.hpp"
 #include "corpus_file.hpp"
 #include "crawler.hpp"
@@ -32,6 +33,7 @@
 #include "results.hpp"
 #include "thread_pool.hpp"
 #include "url.hpp"
+#include "wiki_import.hpp"
 #include "thread_pool.hpp"
 #include "stemmer.hpp"
 #include "stopwords.hpp"
@@ -95,6 +97,12 @@ int usage() {
                  "                               the k highest scoring documents\n"
                  "  index-write [--encoding <name>] [--threads <n>] <source> <file>\n"
                  "                               save an index to disk\n"
+                 "  wiki-import [--limit <n>] [--abstracts] <dump.json|-> <file>\n"
+                 "                               build a corpus from a Wikipedia CirrusSearch dump\n"
+                 "  beir-import <corpus.jsonl> <file>\n"
+                 "                               build a corpus from a BEIR dataset\n"
+                 "  evaluate [options] <source> <queries.jsonl> <qrels.tsv>\n"
+                 "                               nDCG@10, precision@10 and recall@100\n"
                  "  corpus-write <corpus_dir> <file>\n"
                  "                               pack a corpus directory into one file\n"
                  "  index-size <source>          encoded size under each encoding\n"
@@ -504,6 +512,60 @@ std::unique_ptr<CorpusReader> open_snippet_corpus(const std::string& source,
     return open_corpus(*path, error);
 }
 
+int cmd_wiki_import(const std::vector<std::string>& args) {
+    std::vector<std::string> rest;
+    std::size_t limit = 0;
+    WikiField field = WikiField::Text;
+
+    for (std::size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "--abstracts") {
+            field = WikiField::OpeningText;
+            continue;
+        }
+        if (args[i] == "--limit") {
+            if (i + 1 >= args.size() || !parse_count(args[i + 1], limit)) {
+                std::cerr << "search: limit must be a non-negative integer\n";
+                return 1;
+            }
+            i++;
+            continue;
+        }
+        if (args[i].starts_with("--")) {
+            std::cerr << "search: unknown option: " << args[i] << "\n";
+            return 1;
+        }
+        rest.push_back(args[i]);
+    }
+
+    if (rest.size() != 2) {
+        return usage();
+    }
+
+    WikiImportReport report;
+    std::string error;
+    bool ok = false;
+
+    if (rest[0] == "-") {
+        ok = import_cirrussearch(std::cin, rest[1], field, limit, report, error);
+    } else {
+        std::ifstream dump(rest[0], std::ios::binary);
+        if (!dump) {
+            std::cerr << "search: cannot read " << rest[0] << "\n";
+            return 1;
+        }
+        ok = import_cirrussearch(dump, rest[1], field, limit, report, error);
+    }
+
+    if (!ok) {
+        std::cerr << "search: " << error << "\n";
+        return 1;
+    }
+
+    std::cout << "lines " << report.lines_seen << "\n"
+              << "documents " << report.documents_written << "\n"
+              << "skipped_empty " << report.skipped_empty << "\n";
+    return 0;
+}
 
 int cmd_corpus_write(const std::vector<std::string>& args) {
     if (args.size() != 2) {
@@ -523,7 +585,55 @@ int cmd_corpus_write(const std::vector<std::string>& args) {
     return 0;
 }
 
+int cmd_beir_import(const std::vector<std::string>& args) {
+    if (args.size() != 2) {
+        return usage();
+    }
 
+    BeirImportReport report;
+    std::string error;
+    if (!import_beir(args[0], args[1], report, error)) {
+        std::cerr << "search: " << error << "\n";
+        return 1;
+    }
+
+    std::cout << "lines " << report.lines_seen << "\n"
+              << "documents " << report.documents_written << "\n"
+              << "skipped " << report.skipped_empty << "\n";
+    return 0;
+}
+
+int cmd_evaluate(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    QueryOptions options;
+    if (!take_query_options(rest, options)) {
+        return 1;
+    }
+    if (rest.size() != 3) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(rest[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+
+    RelevanceReport report;
+    std::string error;
+    if (!evaluate_relevance(*opened, rest[1], rest[2], options, report, error)) {
+        std::cerr << "search: " << error << "\n";
+        return 1;
+    }
+
+    std::cout << "queries " << report.queries << "\n"
+              << "unjudged " << report.unjudged << "\n"
+              << "scorer " << (options.scorer == Scorer::Bm25 ? "bm25" : "tfidf") << "\n"
+              << std::fixed << std::setprecision(4)
+              << "ndcg_at_10 " << report.ndcg_at_10 << "\n"
+              << "precision_at_10 " << report.precision_at_10 << "\n"
+              << "recall_at_100 " << report.recall_at_100 << "\n";
+    return 0;
+}
 
 
 
@@ -1486,6 +1596,9 @@ int main(int argc, char** argv) {
     if (command == "lengths") {
         return cmd_lengths(rest);
     }
+    if (command == "wiki-import") {
+        return cmd_wiki_import(rest);
+    }
     if (command == "corpus-write") {
         return cmd_corpus_write(rest);
     }
@@ -1527,6 +1640,12 @@ int main(int argc, char** argv) {
     }
     if (command == "index-write") {
         return cmd_index_write(rest);
+    }
+    if (command == "beir-import") {
+        return cmd_beir_import(rest);
+    }
+    if (command == "evaluate") {
+        return cmd_evaluate(rest);
     }
     if (command == "index-size") {
         return cmd_index_size(rest);

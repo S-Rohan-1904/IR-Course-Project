@@ -54,6 +54,9 @@ add_executable(search
   src/corpus_file.cpp
   src/mapped_file.cpp
   src/index_map.cpp
+  src/jsonl.cpp
+  src/beir.cpp
+  src/wiki_import.cpp
 )
 
 target_include_directories(search PRIVATE src)
