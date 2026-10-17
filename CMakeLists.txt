@@ -42,6 +42,12 @@ add_executable(search
   src/ranking.cpp
   src/index_io.cpp
   src/thread_pool.cpp
+  src/url.cpp
+  src/robots.cpp
+  src/html.cpp
+  src/frontier.cpp
+  src/fetcher.cpp
+  src/crawler.cpp
   src/snippet.cpp
   src/results.cpp
   src/corpus_file.cpp
