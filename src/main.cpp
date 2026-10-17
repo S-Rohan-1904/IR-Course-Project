@@ -15,6 +15,7 @@
 
 #include "analyzer.hpp"
 #include "beir.hpp"
+#include "bench.hpp"
 #include "corpus.hpp"
 #include "corpus_file.hpp"
 #include "crawler.hpp"
@@ -81,6 +82,7 @@ int usage() {
                  "      --max-chars <n>          how long an excerpt may be\n"
                  "      --tsv                    id and score, tab separated\n"
                  "  repl [options] <source>      read queries until end of input\n"
+                 "  bench build <source>         measure index construction\n"
                  "  bench query <source> <query_file>\n"
                  "                               measure query latency over a query log\n"
                  "      --stable                 print only run-to-run stable figures\n"
@@ -636,6 +638,152 @@ int cmd_evaluate(const std::vector<std::string>& args) {
 }
 
 
+int cmd_bench(const std::vector<std::string>& args) {
+    std::vector<std::string> rest;
+    bool stable_only = false;
+    std::size_t threads = 1;
+    std::size_t limit = 10;
+    std::size_t repeats = 1;
+    bool snippets = false;
+    std::string snippet_corpus;
+
+    for (std::size_t i = 0; i < args.size(); i++) {
+        const std::string& argument = args[i];
+        if (!argument.starts_with("--")) {
+            rest.push_back(argument);
+            continue;
+        }
+
+        if (argument == "--stable") {
+            stable_only = true;
+            continue;
+        }
+        if (argument == "--snippet") {
+            snippets = true;
+            continue;
+        }
+
+        if (i + 1 >= args.size()) {
+            return usage();
+        }
+
+        // The only flag here whose value is not a number: where snippet text
+        // comes from, when it is not beside the index.
+        if (argument == "--corpus") {
+            snippet_corpus = args[i + 1];
+            i++;
+            continue;
+        }
+
+        std::size_t value = 0;
+        if (!parse_count(args[i + 1], value)) {
+            std::cerr << "search: expected a number after " << argument << ": " << args[i + 1]
+                      << "\n";
+            return 1;
+        }
+
+        if (argument == "--threads") {
+            if (value == 0) {
+                std::cerr << "search: threads must be a positive integer\n";
+                return 1;
+            }
+            threads = value;
+        } else if (argument == "--limit") {
+            limit = value;
+        } else if (argument == "--repeats") {
+            if (value == 0) {
+                std::cerr << "search: repeats must be a positive integer\n";
+                return 1;
+            }
+            repeats = value;
+        } else {
+            std::cerr << "search: unknown option: " << argument << "\n";
+            return 1;
+        }
+
+        i++;
+    }
+
+    if (rest.size() < 2) {
+        return usage();
+    }
+
+    const std::string& what = rest[0];
+    const std::filesystem::path source = rest[1];
+
+    std::error_code ec;
+    if (!std::filesystem::is_directory(source, ec) &&
+        !std::filesystem::is_regular_file(source, ec)) {
+        return reject_missing_corpus(source);
+    }
+
+    if (what == "build") {
+        if (rest.size() != 2) {
+            return usage();
+        }
+        if (!std::filesystem::is_directory(source, ec) && !looks_like_corpus_file(source)) {
+            std::cerr << "search: bench build needs a corpus directory or a .corpus file: "
+                      << source.string() << "\n";
+            return 1;
+        }
+        print_measurements(std::cout, bench_environment(source), stable_only);
+        print_measurements(std::cout, bench_build(source, threads), stable_only);
+        return 0;
+    }
+
+    if (what == "query") {
+        if (rest.size() != 3) {
+            return usage();
+        }
+
+        std::string text;
+        if (!read_text_file(rest[2], text)) {
+            return 1;
+        }
+
+        std::vector<std::string> queries;
+        std::istringstream lines(text);
+        std::string line;
+        while (std::getline(lines, line)) {
+            const std::size_t begin = line.find_first_not_of(" \t\r");
+            if (begin == std::string::npos) {
+                continue;
+            }
+            const std::size_t end = line.find_last_not_of(" \t\r");
+            queries.push_back(line.substr(begin, end - begin + 1));
+        }
+
+        const std::optional<InvertedIndex> opened = open_index(source, threads);
+        if (!opened.has_value()) {
+            return 1;
+        }
+        if (opened->document_count() == 0) {
+            std::cerr << "search: bench query has nothing to search in " << source.string()
+                      << "\n";
+            return 1;
+        }
+
+        QueryOptions snippet_options;
+        snippet_options.snippets = snippets;
+        snippet_options.corpus = snippet_corpus;
+        const std::unique_ptr<CorpusReader> corpus =
+            open_snippet_corpus(source.string(), snippet_options, snippets);
+        if (snippets && corpus == nullptr) {
+            std::cerr << "search: bench query --snippet found no corpus beside " << source.string()
+                      << "\n";
+            return 1;
+        }
+
+        print_measurements(std::cout, bench_environment(source), stable_only);
+        print_measurements(std::cout,
+                           bench_query(*opened, corpus.get(), queries, limit, repeats, snippets),
+                           stable_only);
+        return 0;
+    }
+
+    std::cerr << "search: unknown benchmark: " << what << "\n";
+    return 1;
+}
 
 int cmd_query(const std::vector<std::string>& args) {
     std::vector<std::string> rest = args;
@@ -1601,6 +1749,9 @@ int main(int argc, char** argv) {
     }
     if (command == "corpus-write") {
         return cmd_corpus_write(rest);
+    }
+    if (command == "bench") {
+        return cmd_bench(rest);
     }
     if (command == "query") {
         return cmd_query(rest);

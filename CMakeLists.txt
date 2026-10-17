@@ -51,6 +51,7 @@ add_executable(search
   src/snippet.cpp
   src/pagerank.cpp
   src/results.cpp
+  src/bench.cpp
   src/corpus_file.cpp
   src/mapped_file.cpp
   src/index_map.cpp
