@@ -49,6 +49,7 @@ add_executable(search
   src/fetcher.cpp
   src/crawler.cpp
   src/snippet.cpp
+  src/pagerank.cpp
   src/results.cpp
   src/corpus_file.cpp
   src/mapped_file.cpp

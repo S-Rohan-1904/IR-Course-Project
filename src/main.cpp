@@ -24,6 +24,7 @@
 #include "index.hpp"
 #include "index_io.hpp"
 #include "normalize.hpp"
+#include "pagerank.hpp"
 #include "query.hpp"
 #include "robots.hpp"
 #include "snippet.hpp"
@@ -100,6 +101,8 @@ int usage() {
                  "  pool-sum <threads> <n>       sum of squares below n, on a thread pool\n"
                  "  snippet [--max-chars <n>] <corpus_dir> <doc_id> <word>...\n"
                  "                               an excerpt with the matches marked\n"
+                 "  pagerank [--iterations <n>] [--damping <d>] <links_file>\n"
+                 "                               PageRank over a crawl's link graph\n"
                  "  url <url>                    normalize a url\n"
                  "  url-resolve <base> <ref>     resolve a link against a base url\n"
                  "  robots <file> <agent> <path> is this path allowed?\n"
@@ -668,6 +671,69 @@ int cmd_repl(const std::vector<std::string>& args) {
 }
 
 
+int cmd_pagerank(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    std::size_t iterations = 30;
+    double damping = 0.85;
+
+    while (rest.size() >= 2 && rest.front().starts_with("--")) {
+        const std::string flag = rest.front();
+        if (flag == "--iterations") {
+            if (!parse_count(rest[1], iterations)) {
+                std::cerr << "search: iterations must be a non-negative integer: " << rest[1]
+                          << "\n";
+                return 1;
+            }
+        } else if (flag == "--damping") {
+            try {
+                std::size_t consumed = 0;
+                damping = std::stod(rest[1], &consumed);
+                if (consumed != rest[1].size() || damping < 0.0 || damping > 1.0) {
+                    throw std::invalid_argument("damping");
+                }
+            } catch (const std::exception&) {
+                std::cerr << "search: damping must be between 0 and 1: " << rest[1] << "\n";
+                return 1;
+            }
+        } else {
+            std::cerr << "search: unknown option: " << flag << "\n";
+            return 1;
+        }
+        rest.erase(rest.begin(), rest.begin() + 2);
+    }
+
+    if (rest.size() != 1) {
+        return usage();
+    }
+
+    std::string text;
+    if (!read_text_file(rest[0], text)) {
+        return 1;
+    }
+
+    std::vector<std::pair<std::string, std::string>> links;
+    std::size_t line_start = 0;
+    while (line_start < text.size()) {
+        const std::size_t line_end = text.find('\n', line_start);
+        const std::string line =
+            text.substr(line_start, line_end == std::string::npos ? std::string::npos
+                                                                  : line_end - line_start);
+        const std::size_t tab = line.find('\t');
+        if (tab != std::string::npos) {
+            links.emplace_back(line.substr(0, tab), line.substr(tab + 1));
+        }
+        if (line_end == std::string::npos) {
+            break;
+        }
+        line_start = line_end + 1;
+    }
+
+    std::cout << std::fixed << std::setprecision(6);
+    for (const RankedPage& page : pagerank(links, iterations, damping)) {
+        std::cout << page.page << " " << page.score << "\n";
+    }
+    return 0;
+}
 
 
 int cmd_snippet(const std::vector<std::string>& args) {
@@ -1428,6 +1494,9 @@ int main(int argc, char** argv) {
     }
     if (command == "repl") {
         return cmd_repl(rest);
+    }
+    if (command == "pagerank") {
+        return cmd_pagerank(rest);
     }
     if (command == "snippet") {
         return cmd_snippet(rest);
