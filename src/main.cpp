@@ -75,8 +75,11 @@ int usage() {
                  "      --repeats <n>            times to run each query\n"
                  "      --snippet [--corpus <p>] measure with excerpts too\n"
                  "  lengths <corpus_dir>         indexed length of each document\n"
+                 "  index-write [--encoding <name>] [--threads <n>] <source> <file>\n"
+                 "                               save an index to disk\n"
                  "  corpus-write <corpus_dir> <file>\n"
                  "                               pack a corpus directory into one file\n"
+                 "  index-size <source>          encoded size under each encoding\n"
                  "  pool-sum <threads> <n>       sum of squares below n, on a thread pool\n"
                  "      --delay <ms>             floor between requests to one host\n"
                  "      --mirror <dir>           fetch from a mirrored site on disk\n"
@@ -460,7 +463,75 @@ int cmd_pool_sum(const std::vector<std::string>& args) {
     return 0;
 }
 
+int cmd_index_write(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    IndexEncoding encoding = IndexEncoding::VarByte;
+    if (rest.size() >= 2 && rest.front() == "--encoding") {
+        const std::optional<IndexEncoding> parsed = parse_encoding(rest[1]);
+        if (!parsed.has_value()) {
+            std::cerr << "search: unknown encoding: " << rest[1] << "\n";
+            return 1;
+        }
+        encoding = *parsed;
+        rest.erase(rest.begin(), rest.begin() + 2);
+    }
+    std::size_t threads = 1;
+    if (!take_threads(rest, threads)) {
+        return 1;
+    }
+    if (rest.size() != 2) {
+        return usage();
+    }
 
+    const std::optional<InvertedIndex> opened = open_index(rest[0], threads);
+    if (!opened.has_value()) {
+        return 1;
+    }
+
+    std::string error;
+    if (!write_index_file(*opened, rest[1], encoding, error)) {
+        std::cerr << "search: " << error << "\n";
+        return 1;
+    }
+    return 0;
+}
+
+int cmd_index_size(const std::vector<std::string>& args) {
+    if (args.size() != 1) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(args[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+
+    const IndexEncoding encodings[] = {IndexEncoding::Plain, IndexEncoding::Delta,
+                                       IndexEncoding::VarByte};
+    const char* names[] = {"plain", "delta", "varbyte"};
+
+    std::size_t plain_total = 0;
+    for (std::size_t i = 0; i < 3; i++) {
+        const IndexSizeReport report = measure_index(*opened, encodings[i]);
+        if (i == 0) {
+            plain_total = report.total;
+        }
+
+        std::cout << names[i] << " " << report.total
+                  << " header " << report.header
+                  << " documents " << report.documents
+                  << " dictionary " << report.dictionary
+                  << " postings " << report.postings
+                  << " positions " << report.positions << "\n";
+    }
+
+    const IndexSizeReport best = measure_index(*opened, IndexEncoding::VarByte);
+    std::cout << "ratio " << std::fixed << std::setprecision(2)
+              << (best.total > 0 ? static_cast<double>(plain_total) / static_cast<double>(best.total)
+                                 : 0.0)
+              << "\n";
+    return 0;
+}
 
 int cmd_lengths(const std::vector<std::string>& args) {
     if (args.size() != 1) {
@@ -803,6 +874,12 @@ int main(int argc, char** argv) {
     }
     if (command == "pool-sum") {
         return cmd_pool_sum(rest);
+    }
+    if (command == "index-write") {
+        return cmd_index_write(rest);
+    }
+    if (command == "index-size") {
+        return cmd_index_size(rest);
     }
     if (command == "analyze-doc") {
         return cmd_analyze_doc(rest);
