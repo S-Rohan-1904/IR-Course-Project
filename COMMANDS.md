@@ -58,4 +58,6 @@ file, pass the corpus and it will just answer slowly by rebuilding first.
 ```bash
 ./build/search beir-import <corpus.jsonl> <out.corpus>
 ./build/search evaluate <index.idx> <queries.jsonl> <qrels.tsv>
+./build/search evaluate --cutoff 5 <index.idx> <queries.jsonl> <qrels.tsv>
+./build/search evaluate --scorer tfidf <index.idx> <queries.jsonl> <qrels.tsv>
 ```

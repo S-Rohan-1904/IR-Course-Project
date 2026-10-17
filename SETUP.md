@@ -78,7 +78,7 @@ python3 tests/runner.py
 ```
 
 ```
-All 806 checks passing.
+All 810 checks passing.
 ```
 
 These are end-to-end: each case runs the real binary and compares its output.
@@ -212,10 +212,25 @@ unzip scifact.zip && cd ../..
 
 ```
 queries 300
+unjudged 809
+scorer bm25
+cutoff 10
 ndcg_at_10 0.6714
 precision_at_10 0.0897
+max_precision_at_10 0.1130
+recall_at_10 0.8130
+f1_at_10 0.1596
+mrr_at_10 0.6315
+map 0.6256
+r_precision 0.5208
 recall_at_100 0.9126
 ```
+
+Precision@10 looks low because 277 of SciFact's 300 test queries have exactly
+one relevant document, so no ranking can score above 0.1130, which is what
+`max_precision_at_10` reports. nDCG@10 divides by the best ranking achievable
+for each query's own judgements, which is why it is the number BEIR publishes
+and the one to compare.
 
 SciFact is 2.8 MB and takes under a minute end to end. The published BEIR BM25
 baseline for it is 0.665.

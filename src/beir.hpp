@@ -46,16 +46,34 @@ struct JudgedQuery {
 struct RelevanceReport {
     std::size_t queries = 0;      // queries with at least one judged document
     std::size_t unjudged = 0;     // queries in the file with no qrels
-    double precision_at_10 = 0.0;
+    std::size_t cutoff = 10;      // the k every at_k measure below was taken at
+    double precision_at_k = 0.0;
+    double recall_at_k = 0.0;
+    double f1_at_k = 0.0;
+    double ndcg_at_k = 0.0;
+    double mrr_at_k = 0.0;
+    double mean_average_precision = 0.0;
+    double r_precision = 0.0;
     double recall_at_100 = 0.0;
-    double ndcg_at_10 = 0.0;
+
+    // The highest precision_at_k any ranking could reach on these judgements:
+    // a query with fewer than k relevant documents cannot fill k slots, so on a
+    // collection like SciFact, where most queries have one relevant document,
+    // precision_at_10 is capped near 0.11 however good the ranking is. Reported
+    // so that precision_at_k can be read against what is achievable.
+    double max_precision_at_k = 0.0;
 };
 
 // Runs every judged query and scores the ranking against the qrels.
 //
-// nDCG@10 with graded gains, which is what BEIR reports, so the number can be
-// put next to the published baseline. Precision@10 alongside it, because it is
-// the one an interviewer will ask about and it does not need explaining.
+// nDCG@k with graded gains, which is what BEIR reports, so the number can be
+// put next to the published baseline. The rest are the measures a reader will
+// ask for: precision, recall and their harmonic mean at the same k, mean
+// reciprocal rank, mean average precision, and R-precision.
+//
+// `cutoff` is the k. Enough results are retrieved for every measure to be
+// exact: at least 100 for recall_at_100, at least k, and at least as many as
+// the query has relevant documents, which is what R-precision needs.
 bool evaluate_relevance(const InvertedIndex& index, const std::filesystem::path& queries_jsonl,
                         const std::filesystem::path& qrels_tsv, const QueryOptions& options,
-                        RelevanceReport& report, std::string& error);
+                        std::size_t cutoff, RelevanceReport& report, std::string& error);

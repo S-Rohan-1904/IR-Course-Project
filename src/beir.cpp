@@ -180,9 +180,15 @@ bool import_beir(const std::filesystem::path& corpus_jsonl, const std::filesyste
 
 bool evaluate_relevance(const InvertedIndex& index, const std::filesystem::path& queries_jsonl,
                         const std::filesystem::path& qrels_tsv, const QueryOptions& options,
-                        RelevanceReport& report, std::string& error) {
+                        std::size_t cutoff, RelevanceReport& report, std::string& error) {
     report = RelevanceReport{};
+    report.cutoff = cutoff;
     error.clear();
+
+    if (cutoff == 0) {
+        error = "cutoff must be at least 1";
+        return false;
+    }
 
     Qrels qrels;
     if (!read_qrels(qrels_tsv, qrels, error)) {
@@ -196,8 +202,14 @@ bool evaluate_relevance(const InvertedIndex& index, const std::filesystem::path&
     }
 
     double precision_total = 0.0;
-    double recall_total = 0.0;
+    double recall_at_k_total = 0.0;
+    double f1_total = 0.0;
     double ndcg_total = 0.0;
+    double reciprocal_rank_total = 0.0;
+    double average_precision_total = 0.0;
+    double r_precision_total = 0.0;
+    double recall_at_100_total = 0.0;
+    double max_precision_total = 0.0;
 
     std::string line;
     while (std::getline(in, line)) {
@@ -235,8 +247,12 @@ bool evaluate_relevance(const InvertedIndex& index, const std::filesystem::path&
             continue;
         }
 
+        // Retrieve deep enough that every measure is exact rather than
+        // truncated: 100 for recall_at_100, k for the at_k measures, and one
+        // rank per relevant document for R-precision.
+        const std::size_t relevant = judged->second.size();
         QueryOptions run = options;
-        run.limit = 100;
+        run.limit = std::max(std::max<std::size_t>(100, cutoff), relevant);
         run.snippets = false;
 
         std::string query_error;
@@ -246,32 +262,76 @@ bool evaluate_relevance(const InvertedIndex& index, const std::filesystem::path&
             continue;
         }
 
-        std::size_t hits_at_10 = 0;
-        for (std::size_t i = 0; i < results->size() && i < 10; i++) {
-            if (judged->second.count((*results)[i].document_id) != 0) {
-                hits_at_10++;
-            }
-        }
-
+        // One pass over the ranking collects every rank-dependent quantity:
+        // hits inside k, inside 100 and inside R, the rank of the first hit,
+        // and the running sum of precision at each hit that average precision
+        // is defined as.
+        std::size_t hits_at_k = 0;
         std::size_t hits_at_100 = 0;
-        for (const QueryResult& result : *results) {
-            if (judged->second.count(result.document_id) != 0) {
+        std::size_t hits_at_r = 0;
+        std::size_t hits_so_far = 0;
+        std::size_t first_hit_rank = 0;
+        double precision_sum_at_hits = 0.0;
+
+        for (std::size_t i = 0; i < results->size(); i++) {
+            if (judged->second.count((*results)[i].document_id) == 0) {
+                continue;
+            }
+            hits_so_far++;
+            const std::size_t rank = i + 1;
+            if (first_hit_rank == 0) {
+                first_hit_rank = rank;
+            }
+            if (rank <= cutoff) {
+                hits_at_k++;
+            }
+            if (rank <= 100) {
                 hits_at_100++;
             }
+            if (rank <= relevant) {
+                hits_at_r++;
+            }
+            precision_sum_at_hits += static_cast<double>(hits_so_far) /
+                                     static_cast<double>(rank);
         }
 
-        precision_total += static_cast<double>(hits_at_10) / 10.0;
-        recall_total += static_cast<double>(hits_at_100) /
-                        static_cast<double>(judged->second.size());
-        ndcg_total += ndcg(*results, judged->second, 10);
+        const double precision_at_k = static_cast<double>(hits_at_k) /
+                                      static_cast<double>(cutoff);
+        const double recall_at_k = static_cast<double>(hits_at_k) /
+                                   static_cast<double>(relevant);
+
+        precision_total += precision_at_k;
+        recall_at_k_total += recall_at_k;
+        if (precision_at_k + recall_at_k > 0.0) {
+            f1_total += 2.0 * precision_at_k * recall_at_k / (precision_at_k + recall_at_k);
+        }
+        recall_at_100_total += static_cast<double>(hits_at_100) /
+                               static_cast<double>(relevant);
+        r_precision_total += static_cast<double>(hits_at_r) /
+                             static_cast<double>(relevant);
+        // Averaged over the relevant documents, not over the ones found, so a
+        // ranking that misses relevant documents is penalised for missing them.
+        average_precision_total += precision_sum_at_hits / static_cast<double>(relevant);
+        if (first_hit_rank != 0 && first_hit_rank <= cutoff) {
+            reciprocal_rank_total += 1.0 / static_cast<double>(first_hit_rank);
+        }
+        max_precision_total += static_cast<double>(std::min(relevant, cutoff)) /
+                               static_cast<double>(cutoff);
+        ndcg_total += ndcg(*results, judged->second, cutoff);
         report.queries++;
     }
 
     if (report.queries > 0) {
         const double count = static_cast<double>(report.queries);
-        report.precision_at_10 = precision_total / count;
-        report.recall_at_100 = recall_total / count;
-        report.ndcg_at_10 = ndcg_total / count;
+        report.precision_at_k = precision_total / count;
+        report.recall_at_k = recall_at_k_total / count;
+        report.f1_at_k = f1_total / count;
+        report.ndcg_at_k = ndcg_total / count;
+        report.mrr_at_k = reciprocal_rank_total / count;
+        report.mean_average_precision = average_precision_total / count;
+        report.r_precision = r_precision_total / count;
+        report.recall_at_100 = recall_at_100_total / count;
+        report.max_precision_at_k = max_precision_total / count;
     }
 
     return true;

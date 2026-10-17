@@ -103,8 +103,8 @@ int usage() {
                  "                               build a corpus from a Wikipedia CirrusSearch dump\n"
                  "  beir-import <corpus.jsonl> <file>\n"
                  "                               build a corpus from a BEIR dataset\n"
-                 "  evaluate [options] <source> <queries.jsonl> <qrels.tsv>\n"
-                 "                               nDCG@10, precision@10 and recall@100\n"
+                 "  evaluate [--cutoff <k>] [options] <source> <queries.jsonl> <qrels.tsv>\n"
+                 "                               nDCG, precision, recall, F1, MRR, MAP at k\n"
                  "  corpus-write <corpus_dir> <file>\n"
                  "                               pack a corpus directory into one file\n"
                  "  index-size <source>          encoded size under each encoding\n"
@@ -607,6 +607,23 @@ int cmd_beir_import(const std::vector<std::string>& args) {
 
 int cmd_evaluate(const std::vector<std::string>& args) {
     std::vector<std::string> rest = args;
+
+    // --cutoff is this command's own, so it is taken before the query options
+    // that query, repl and evaluate share.
+    std::size_t cutoff = 10;
+    for (std::size_t i = 0; i + 1 < rest.size(); i++) {
+        if (rest[i] != "--cutoff") {
+            continue;
+        }
+        if (!parse_count(rest[i + 1], cutoff) || cutoff == 0) {
+            std::cerr << "search: cutoff must be a positive integer: " << rest[i + 1] << "\n";
+            return 1;
+        }
+        rest.erase(rest.begin() + static_cast<std::ptrdiff_t>(i),
+                   rest.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+        break;
+    }
+
     QueryOptions options;
     if (!take_query_options(rest, options)) {
         return 1;
@@ -622,17 +639,25 @@ int cmd_evaluate(const std::vector<std::string>& args) {
 
     RelevanceReport report;
     std::string error;
-    if (!evaluate_relevance(*opened, rest[1], rest[2], options, report, error)) {
+    if (!evaluate_relevance(*opened, rest[1], rest[2], options, cutoff, report, error)) {
         std::cerr << "search: " << error << "\n";
         return 1;
     }
 
+    const std::string k = std::to_string(report.cutoff);
     std::cout << "queries " << report.queries << "\n"
               << "unjudged " << report.unjudged << "\n"
               << "scorer " << (options.scorer == Scorer::Bm25 ? "bm25" : "tfidf") << "\n"
+              << "cutoff " << report.cutoff << "\n"
               << std::fixed << std::setprecision(4)
-              << "ndcg_at_10 " << report.ndcg_at_10 << "\n"
-              << "precision_at_10 " << report.precision_at_10 << "\n"
+              << "ndcg_at_" << k << " " << report.ndcg_at_k << "\n"
+              << "precision_at_" << k << " " << report.precision_at_k << "\n"
+              << "max_precision_at_" << k << " " << report.max_precision_at_k << "\n"
+              << "recall_at_" << k << " " << report.recall_at_k << "\n"
+              << "f1_at_" << k << " " << report.f1_at_k << "\n"
+              << "mrr_at_" << k << " " << report.mrr_at_k << "\n"
+              << "map " << report.mean_average_precision << "\n"
+              << "r_precision " << report.r_precision << "\n"
               << "recall_at_100 " << report.recall_at_100 << "\n";
     return 0;
 }

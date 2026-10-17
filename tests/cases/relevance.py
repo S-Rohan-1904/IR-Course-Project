@@ -31,8 +31,48 @@ CASES = [
         "name": "the measures average over judged queries",
         "argv": ["evaluate", "build/beir-test.corpus",
                  "tests/fixtures/beir/queries.jsonl", "tests/fixtures/beir/qrels.tsv"],
-        "stdout": "queries 2\nunjudged 1\nscorer bm25\nndcg_at_10 0.5000\n"
-                  "precision_at_10 0.0500\nrecall_at_100 0.5000",
+        "stdout": "queries 2\nunjudged 1\nscorer bm25\ncutoff 10\nndcg_at_10 0.5000\n"
+                  "precision_at_10 0.0500\nmax_precision_at_10 0.1000\n"
+                  "recall_at_10 0.5000\nf1_at_10 0.0909\nmrr_at_10 0.5000\n"
+                  "map 0.5000\nr_precision 0.5000\nrecall_at_100 0.5000",
+    },
+    {
+        # Precision at 10 cannot exceed 0.1 when a query has one relevant
+        # document, which is why max_precision_at_10 is reported beside it.
+        # At a cutoff of 1 the ceiling is 1.0, and the measure is then just
+        # "was the top result relevant": yes for q1, no for q2.
+        "name": "the cutoff moves every at_k measure and its ceiling",
+        "argv": ["evaluate", "--cutoff", "1", "build/beir-test.corpus",
+                 "tests/fixtures/beir/queries.jsonl", "tests/fixtures/beir/qrels.tsv"],
+        "stdout": "queries 2\nunjudged 1\nscorer bm25\ncutoff 1\nndcg_at_1 0.5000\n"
+                  "precision_at_1 0.5000\nmax_precision_at_1 1.0000\n"
+                  "recall_at_1 0.5000\nf1_at_1 0.5000\nmrr_at_1 0.5000\n"
+                  "map 0.5000\nr_precision 0.5000\nrecall_at_100 0.5000",
+    },
+    {
+        # MAP and R-precision are cutoff independent: both are defined by the
+        # number of relevant documents, not by k.
+        "name": "map and r-precision do not move with the cutoff",
+        "argv": ["evaluate", "--cutoff", "5", "build/beir-test.corpus",
+                 "tests/fixtures/beir/queries.jsonl", "tests/fixtures/beir/qrels.tsv"],
+        "stdout": "queries 2\nunjudged 1\nscorer bm25\ncutoff 5\nndcg_at_5 0.5000\n"
+                  "precision_at_5 0.1000\nmax_precision_at_5 0.2000\n"
+                  "recall_at_5 0.5000\nf1_at_5 0.1667\nmrr_at_5 0.5000\n"
+                  "map 0.5000\nr_precision 0.5000\nrecall_at_100 0.5000",
+    },
+    {
+        "name": "a cutoff of zero is rejected",
+        "argv": ["evaluate", "--cutoff", "0", "build/beir-test.corpus",
+                 "tests/fixtures/beir/queries.jsonl", "tests/fixtures/beir/qrels.tsv"],
+        "exit_code": 1,
+        "stderr_not_empty": True,
+    },
+    {
+        "name": "a non-numeric cutoff is rejected",
+        "argv": ["evaluate", "--cutoff", "ten", "build/beir-test.corpus",
+                 "tests/fixtures/beir/queries.jsonl", "tests/fixtures/beir/qrels.tsv"],
+        "exit_code": 1,
+        "stderr_not_empty": True,
     },
     {
         "name": "a missing qrels file is reported",

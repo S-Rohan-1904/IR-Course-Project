@@ -55,8 +55,11 @@ offsets, so results show the document's own capitalization and punctuation.
 **Link analysis.** PageRank by power iteration over a crawl's link graph, with
 a damping factor and dangling-node handling.
 
-**Measurement.** `evaluate` reports nDCG@10, precision@10 and recall@100 against
-BEIR queries and qrels. `bench build` and `bench query` measure construction and
+**Measurement.** `evaluate` reports nDCG, precision, recall, F1, MRR at a
+cutoff you choose with `--cutoff`, plus MAP, R-precision and recall@100,
+against BEIR queries and qrels. It also reports the highest precision the
+judgements allow at that cutoff, since a query with one relevant document
+cannot fill ten result slots. `bench build` and `bench query` measure construction and
 latency. `index-size` reports the encoded size under each encoding, so the
 compression claim is checkable rather than asserted.
 
