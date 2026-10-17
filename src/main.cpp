@@ -18,6 +18,8 @@
 #include "corpus_file.hpp"
 #include "document.hpp"
 #include "normalize.hpp"
+#include "thread_pool.hpp"
+#include "thread_pool.hpp"
 #include "stemmer.hpp"
 #include "stopwords.hpp"
 #include "tokenizer.hpp"
@@ -57,6 +59,7 @@ int usage() {
                  "      --snippet [--corpus <p>] measure with excerpts too\n"
                  "  corpus-write <corpus_dir> <file>\n"
                  "                               pack a corpus directory into one file\n"
+                 "  pool-sum <threads> <n>       sum of squares below n, on a thread pool\n"
                  "      --delay <ms>             floor between requests to one host\n"
                  "      --mirror <dir>           fetch from a mirrored site on disk\n"
                  "      --out <dir>              write the pages as a corpus\n"
@@ -288,6 +291,39 @@ int cmd_corpus_write(const std::vector<std::string>& args) {
 
 
 
+int cmd_pool_sum(const std::vector<std::string>& args) {
+    if (args.size() != 2) {
+        return usage();
+    }
+
+    std::size_t threads = 0;
+    std::size_t count = 0;
+    if (!parse_count(args[0], threads) || threads == 0) {
+        std::cerr << "search: threads must be a positive integer: " << args[0] << "\n";
+        return 1;
+    }
+    if (!parse_count(args[1], count)) {
+        std::cerr << "search: count must be a non-negative integer: " << args[1] << "\n";
+        return 1;
+    }
+
+    ThreadPool pool(threads);
+    std::vector<std::future<std::size_t>> pending;
+    pending.reserve(count);
+    for (std::size_t i = 0; i < count; i++) {
+        pending.push_back(pool.submit([i] { return i * i; }));
+    }
+
+    std::size_t total = 0;
+    for (std::future<std::size_t>& future : pending) {
+        total += future.get();
+    }
+
+    std::cout << "threads " << pool.size() << "\n"
+              << "tasks " << count << "\n"
+              << "sum " << total << "\n";
+    return 0;
+}
 
 
 
@@ -453,6 +489,9 @@ int main(int argc, char** argv) {
     }
     if (command == "corpus-write") {
         return cmd_corpus_write(rest);
+    }
+    if (command == "pool-sum") {
+        return cmd_pool_sum(rest);
     }
     if (command == "analyze-doc") {
         return cmd_analyze_doc(rest);

@@ -36,6 +36,7 @@ add_executable(search
   src/stopwords.cpp
   src/stemmer.cpp
   src/analyzer.cpp
+  src/thread_pool.cpp
   src/corpus_file.cpp
   src/mapped_file.cpp
 )
