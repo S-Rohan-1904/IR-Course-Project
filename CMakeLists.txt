@@ -37,6 +37,8 @@ add_executable(search
   src/stemmer.cpp
   src/analyzer.cpp
   src/index.cpp
+  src/query.cpp
+  src/evaluator.cpp
   src/index_io.cpp
   src/thread_pool.cpp
   src/corpus_file.cpp

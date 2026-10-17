@@ -17,9 +17,11 @@
 #include "corpus.hpp"
 #include "corpus_file.hpp"
 #include "document.hpp"
+#include "evaluator.hpp"
 #include "index.hpp"
 #include "index_io.hpp"
 #include "normalize.hpp"
+#include "query.hpp"
 #include "thread_pool.hpp"
 #include "thread_pool.hpp"
 #include "stemmer.hpp"
@@ -51,6 +53,14 @@ int usage() {
                  "  postings <corpus_dir> <word>  documents containing a word\n"
                  "  tf <corpus_dir> <word>       per-document counts for a word\n"
                  "  positions <corpus_dir> <word> token positions of a word per document\n"
+                 "  lex <query>                  split a query into syntactic tokens\n"
+                 "  parse <query>                parse a query into a boolean tree\n"
+                 "  and <corpus_dir> <word>...   documents containing every word\n"
+                 "  or <corpus_dir> <word>...    documents containing any of the words\n"
+                 "  andnot <corpus_dir> <word> <word>\n"
+                 "                               documents containing the first but not the second\n"
+                 "  phrase <corpus_dir> <text>   documents containing the words consecutively\n"
+                 "  match <corpus_dir> <query>   documents matching a boolean query\n"
                  "      --limit <n>              how many results (default 10)\n"
                  "      --scorer bm25|tfidf      which ranking function\n"
                  "      --snippet                show an excerpt under each result\n"
@@ -304,11 +314,55 @@ int run_set_query(const std::vector<std::string>& args, std::size_t min_words, C
     return 0;
 }
 
+int cmd_and(const std::vector<std::string>& args) {
+    return run_set_query(args, 2, intersect);
+}
 
+int cmd_or(const std::vector<std::string>& args) {
+    return run_set_query(args, 2, unite);
+}
 
+int cmd_andnot(const std::vector<std::string>& args) {
+    if (args.size() != 3) {
+        return usage();
+    }
+    return run_set_query(args, 2, subtract);
+}
 
+int run_parsed_query(const std::vector<std::string>& args, const std::string& query) {
+    const std::optional<InvertedIndex> opened = open_index(args[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+    const InvertedIndex& index = *opened;
 
+    const ParseResult parsed = parse_query(query);
+    if (!parsed.root) {
+        std::cerr << "search: " << parsed.error << "\n";
+        return 1;
+    }
 
+    print_document_ids(index, evaluate(*parsed.root, index));
+    return 0;
+}
+
+int cmd_match(const std::vector<std::string>& args) {
+    if (args.size() != 2) {
+        return usage();
+    }
+    return run_parsed_query(args, args[1]);
+}
+
+int cmd_phrase(const std::vector<std::string>& args) {
+    if (args.size() != 2) {
+        return usage();
+    }
+    if (args[1].find('"') != std::string::npos) {
+        std::cerr << "search: a phrase may not contain a quote\n";
+        return 1;
+    }
+    return run_parsed_query(args, "\"" + args[1] + "\"");
+}
 
 bool read_text_file(const std::filesystem::path& path, std::string& out) {
     std::ifstream in(path, std::ios::binary);
@@ -434,7 +488,46 @@ int cmd_lengths(const std::vector<std::string>& args) {
 
 
 
+int cmd_lex(const std::vector<std::string>& args) {
+    if (args.size() != 1) {
+        return usage();
+    }
 
+    std::vector<QueryToken> tokens;
+    std::string error;
+    if (!lex_query(args[0], tokens, error)) {
+        std::cerr << "search: " << error << "\n";
+        return 1;
+    }
+
+    for (const QueryToken& token : tokens) {
+        switch (token.kind) {
+        case QueryTokenKind::Term:   std::cout << "term " << token.text << "\n"; break;
+        case QueryTokenKind::Phrase: std::cout << "phrase " << token.text << "\n"; break;
+        case QueryTokenKind::And:    std::cout << "and\n"; break;
+        case QueryTokenKind::Or:     std::cout << "or\n"; break;
+        case QueryTokenKind::Not:    std::cout << "not\n"; break;
+        case QueryTokenKind::LParen: std::cout << "lparen\n"; break;
+        case QueryTokenKind::RParen: std::cout << "rparen\n"; break;
+        }
+    }
+    return 0;
+}
+
+int cmd_parse(const std::vector<std::string>& args) {
+    if (args.size() != 1) {
+        return usage();
+    }
+
+    const ParseResult result = parse_query(args[0]);
+    if (!result.root) {
+        std::cerr << "search: " << result.error << "\n";
+        return 1;
+    }
+
+    std::cout << to_sexpr(*result.root) << "\n";
+    return 0;
+}
 
 template <typename Emit>
 int run_term_query(const std::vector<std::string>& args, Emit emit) {
@@ -680,6 +773,27 @@ int main(int argc, char** argv) {
     }
     if (command == "positions") {
         return cmd_positions(rest);
+    }
+    if (command == "lex") {
+        return cmd_lex(rest);
+    }
+    if (command == "parse") {
+        return cmd_parse(rest);
+    }
+    if (command == "and") {
+        return cmd_and(rest);
+    }
+    if (command == "or") {
+        return cmd_or(rest);
+    }
+    if (command == "andnot") {
+        return cmd_andnot(rest);
+    }
+    if (command == "phrase") {
+        return cmd_phrase(rest);
+    }
+    if (command == "match") {
+        return cmd_match(rest);
     }
     if (command == "lengths") {
         return cmd_lengths(rest);
