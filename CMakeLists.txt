@@ -39,8 +39,11 @@ add_executable(search
   src/index.cpp
   src/query.cpp
   src/evaluator.cpp
+  src/ranking.cpp
   src/index_io.cpp
   src/thread_pool.cpp
+  src/snippet.cpp
+  src/results.cpp
   src/corpus_file.cpp
   src/mapped_file.cpp
   src/index_map.cpp

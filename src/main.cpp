@@ -22,6 +22,9 @@
 #include "index_io.hpp"
 #include "normalize.hpp"
 #include "query.hpp"
+#include "snippet.hpp"
+#include "ranking.hpp"
+#include "results.hpp"
 #include "thread_pool.hpp"
 #include "thread_pool.hpp"
 #include "stemmer.hpp"
@@ -61,12 +64,15 @@ int usage() {
                  "                               documents containing the first but not the second\n"
                  "  phrase <corpus_dir> <text>   documents containing the words consecutively\n"
                  "  match <corpus_dir> <query>   documents matching a boolean query\n"
+                 "  query [options] <source> <query>\n"
+                 "                               ranked results for a boolean query\n"
                  "      --limit <n>              how many results (default 10)\n"
                  "      --scorer bm25|tfidf      which ranking function\n"
                  "      --snippet                show an excerpt under each result\n"
                  "      --corpus <path>          where to read snippet text from\n"
                  "      --max-chars <n>          how long an excerpt may be\n"
                  "      --tsv                    id and score, tab separated\n"
+                 "  repl [options] <source>      read queries until end of input\n"
                  "  bench query <source> <query_file>\n"
                  "                               measure query latency over a query log\n"
                  "      --stable                 print only run-to-run stable figures\n"
@@ -75,12 +81,20 @@ int usage() {
                  "      --repeats <n>            times to run each query\n"
                  "      --snippet [--corpus <p>] measure with excerpts too\n"
                  "  lengths <corpus_dir>         indexed length of each document\n"
+                 "  tfidf [--threads <n>] <source> <word>...\n"
+                 "                               rank documents by TF-IDF\n"
+                 "  bm25 [--threads <n>] <source> <word>...\n"
+                 "                               rank documents by BM25\n"
+                 "  top [--bm25] [--threads <n>] <source> <k> <word>...\n"
+                 "                               the k highest scoring documents\n"
                  "  index-write [--encoding <name>] [--threads <n>] <source> <file>\n"
                  "                               save an index to disk\n"
                  "  corpus-write <corpus_dir> <file>\n"
                  "                               pack a corpus directory into one file\n"
                  "  index-size <source>          encoded size under each encoding\n"
                  "  pool-sum <threads> <n>       sum of squares below n, on a thread pool\n"
+                 "  snippet [--max-chars <n>] <corpus_dir> <doc_id> <word>...\n"
+                 "                               an excerpt with the matches marked\n"
                  "      --delay <ms>             floor between requests to one host\n"
                  "      --mirror <dir>           fetch from a mirrored site on disk\n"
                  "      --out <dir>              write the pages as a corpus\n"
@@ -377,6 +391,57 @@ bool read_text_file(const std::filesystem::path& path, std::string& out) {
     return true;
 }
 
+bool take_query_options(std::vector<std::string>& args, QueryOptions& options) {
+    while (!args.empty() && args.front().starts_with("--")) {
+        const std::string flag = args.front();
+
+        if (flag == "--snippet") {
+            options.snippets = true;
+            args.erase(args.begin());
+            continue;
+        }
+        if (flag == "--tsv") {
+            options.tsv = true;
+            args.erase(args.begin());
+            continue;
+        }
+
+        if (args.size() < 2) {
+            return false;
+        }
+        const std::string value = args[1];
+
+        if (flag == "--limit") {
+            if (!parse_count(value, options.limit)) {
+                std::cerr << "search: limit must be a non-negative integer: " << value << "\n";
+                return false;
+            }
+        } else if (flag == "--max-chars") {
+            if (!parse_count(value, options.snippet_chars) || options.snippet_chars == 0) {
+                std::cerr << "search: max-chars must be a positive integer: " << value << "\n";
+                return false;
+            }
+        } else if (flag == "--corpus") {
+            options.corpus = value;
+        } else if (flag == "--scorer") {
+            if (value == "bm25") {
+                options.scorer = Scorer::Bm25;
+            } else if (value == "tfidf") {
+                options.scorer = Scorer::TfIdf;
+            } else {
+                std::cerr << "search: unknown scorer: " << value << "\n";
+                return false;
+            }
+        } else {
+            std::cerr << "search: unknown option: " << flag << "\n";
+            return false;
+        }
+
+        args.erase(args.begin(), args.begin() + 2);
+    }
+
+    return true;
+}
 
 // Where to read document text from when a query asks for snippets.
 //
@@ -385,10 +450,43 @@ bool read_text_file(const std::filesystem::path& path, std::string& out) {
 // file is its own answer; for an index file, the corpus that built it is
 // looked for beside it under the same stem, which is what index-write leaves
 // there. `--corpus` overrides both.
+std::optional<std::filesystem::path> corpus_for_snippets(const std::string& source,
+                                                         const QueryOptions& options) {
+    if (!options.corpus.empty()) {
+        return std::filesystem::path(options.corpus);
+    }
+
+    std::error_code ec;
+    const std::filesystem::path path(source);
+    if (std::filesystem::is_directory(path, ec) || looks_like_corpus_file(path)) {
+        return path;
+    }
+
+    std::filesystem::path beside = path;
+    beside.replace_extension(".corpus");
+    if (beside != path && std::filesystem::is_regular_file(beside, ec)) {
+        return beside;
+    }
+    return std::nullopt;
+}
 
 // Opens the corpus for snippets, or returns nullptr when there is none. A
 // corpus that cannot be opened is not an error: the query still answers, it
 // just answers without excerpts.
+std::unique_ptr<CorpusReader> open_snippet_corpus(const std::string& source,
+                                                  const QueryOptions& options, bool wanted) {
+    if (!wanted) {
+        return nullptr;
+    }
+
+    const std::optional<std::filesystem::path> path = corpus_for_snippets(source, options);
+    if (!path.has_value()) {
+        return nullptr;
+    }
+
+    std::string error;
+    return open_corpus(*path, error);
+}
 
 
 int cmd_corpus_write(const std::vector<std::string>& args) {
@@ -413,12 +511,189 @@ int cmd_corpus_write(const std::vector<std::string>& args) {
 
 
 
+int cmd_query(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    QueryOptions options;
+    if (!take_query_options(rest, options)) {
+        return 1;
+    }
+    if (rest.size() != 2) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(rest[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+
+    std::string error;
+    const std::optional<std::vector<QueryResult>> results =
+        run_query(*opened, open_snippet_corpus(rest[0], options, options.snippets).get(), rest[1],
+                  options, error);
+    if (!results.has_value()) {
+        std::cerr << "search: " << error << "\n";
+        return 1;
+    }
+
+    print_results(std::cout, *results, options);
+    return 0;
+}
+
+int repl_meta_command(const std::string& line, QueryOptions& options, bool& quit) {
+    std::istringstream words(line);
+    std::string name;
+    std::string value;
+    words >> name >> value;
+
+    if (name == ":quit" || name == ":q") {
+        quit = true;
+        return 0;
+    }
+    if (name == ":help") {
+        std::cout << "queries use AND, OR, NOT, parentheses and \"phrases\"\n"
+                     ":limit <n>      how many results to show\n"
+                     ":scorer <name>  bm25 or tfidf\n"
+                     ":snippet <on|off>\n"
+                     ":settings       show the current settings\n"
+                     ":quit\n";
+        return 0;
+    }
+    if (name == ":settings") {
+        std::cout << "limit " << options.limit << "\n"
+                  << "scorer " << (options.scorer == Scorer::Bm25 ? "bm25" : "tfidf") << "\n"
+                  << "snippet " << (options.snippets ? "on" : "off") << "\n";
+        return 0;
+    }
+    if (name == ":limit") {
+        if (!parse_count(value, options.limit)) {
+            std::cout << "limit must be a non-negative integer\n";
+        }
+        return 0;
+    }
+    if (name == ":scorer") {
+        if (value == "bm25") {
+            options.scorer = Scorer::Bm25;
+        } else if (value == "tfidf") {
+            options.scorer = Scorer::TfIdf;
+        } else {
+            std::cout << "scorer must be bm25 or tfidf\n";
+        }
+        return 0;
+    }
+    if (name == ":snippet") {
+        if (value == "on") {
+            options.snippets = true;
+        } else if (value == "off") {
+            options.snippets = false;
+        } else {
+            std::cout << "snippet must be on or off\n";
+        }
+        return 0;
+    }
+
+    std::cout << "unknown command: " << name << "\n";
+    return 0;
+}
+
+int cmd_repl(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    QueryOptions options;
+    if (!take_query_options(rest, options)) {
+        return 1;
+    }
+    if (rest.size() != 1) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(rest[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+
+    // The REPL can turn snippets on later with :snippet, so the corpus is
+    // opened up front rather than at the first query that needs it.
+    const std::unique_ptr<CorpusReader> corpus = open_snippet_corpus(rest[0], options, true);
+    const bool interactive = isatty(STDIN_FILENO) != 0;
+
+    std::string line;
+    while (true) {
+        if (interactive) {
+            std::cout << "> " << std::flush;
+        }
+        if (!std::getline(std::cin, line)) {
+            break;
+        }
+
+        std::size_t begin = line.find_first_not_of(" \t");
+        if (begin == std::string::npos) {
+            continue;
+        }
+        const std::size_t end = line.find_last_not_of(" \t");
+        line = line.substr(begin, end - begin + 1);
+
+        if (line.front() == ':') {
+            bool quit = false;
+            repl_meta_command(line, options, quit);
+            if (quit) {
+                break;
+            }
+            continue;
+        }
+
+        std::string error;
+        const std::optional<std::vector<QueryResult>> results =
+            run_query(*opened, corpus.get(), line, options, error);
+        if (!results.has_value()) {
+            std::cout << "error: " << error << "\n";
+            continue;
+        }
+
+        print_results(std::cout, *results, options);
+    }
+
+    return 0;
+}
 
 
 
 
+int cmd_snippet(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    SnippetOptions options;
 
+    if (rest.size() >= 2 && rest.front() == "--max-chars") {
+        std::size_t max_chars = 0;
+        if (!parse_count(rest[1], max_chars) || max_chars == 0) {
+            std::cerr << "search: max-chars must be a positive integer: " << rest[1] << "\n";
+            return 1;
+        }
+        options.max_chars = max_chars;
+        rest.erase(rest.begin(), rest.begin() + 2);
+    }
 
+    if (rest.size() < 3) {
+        return usage();
+    }
+
+    std::string open_error;
+    const std::unique_ptr<CorpusReader> corpus = open_corpus(rest[0], open_error);
+    if (!corpus) {
+        std::cerr << "search: " << open_error << "\n";
+        return 1;
+    }
+
+    const std::optional<Document> doc = corpus->read(rest[1]);
+    if (!doc.has_value()) {
+        std::cerr << "search: no such document: " << rest[1] << "\n";
+        return 1;
+    }
+
+    const std::vector<std::string> terms =
+        query_terms(std::vector<std::string>(rest.begin() + 2, rest.end()));
+
+    std::cout << make_snippet(doc->title + "\n\n" + doc->body, terms, options) << "\n";
+    return 0;
+}
 
 
 
@@ -554,10 +829,81 @@ int cmd_lengths(const std::vector<std::string>& args) {
     return 0;
 }
 
+void print_ranking(const InvertedIndex& index, const std::vector<ScoredDocument>& ranking) {
+    const std::vector<std::string>& ids = index.document_ids();
+    std::cout << std::fixed << std::setprecision(4);
+    for (const ScoredDocument& scored : ranking) {
+        std::cout << ids[scored.doc_id] << " " << scored.score << "\n";
+    }
+}
 
+int run_ranking(const std::vector<std::string>& args, Scorer scorer) {
+    std::vector<std::string> rest = args;
+    std::size_t threads = 1;
+    if (!take_threads(rest, threads)) {
+        return 1;
+    }
+    if (rest.size() < 2) {
+        return usage();
+    }
 
+    const std::optional<InvertedIndex> opened = open_index(rest[0], threads);
+    if (!opened.has_value()) {
+        return 1;
+    }
+    const InvertedIndex& index = *opened;
 
+    const std::vector<std::string> terms =
+        query_terms(std::vector<std::string>(rest.begin() + 1, rest.end()));
 
+    print_ranking(index, score(terms, index, scorer, threads));
+    return 0;
+}
+
+int cmd_tfidf(const std::vector<std::string>& args) {
+    return run_ranking(args, Scorer::TfIdf);
+}
+
+int cmd_bm25(const std::vector<std::string>& args) {
+    return run_ranking(args, Scorer::Bm25);
+}
+
+int cmd_top(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    bool use_bm25 = false;
+    if (!rest.empty() && rest.front() == "--bm25") {
+        use_bm25 = true;
+        rest.erase(rest.begin());
+    }
+    std::size_t threads = 1;
+    if (!take_threads(rest, threads)) {
+        return 1;
+    }
+    if (rest.size() < 3) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(rest[0], threads);
+    if (!opened.has_value()) {
+        return 1;
+    }
+    const InvertedIndex& index = *opened;
+
+    std::size_t k = 0;
+    if (!parse_count(rest[1], k)) {
+        std::cerr << "search: k must be a non-negative integer: " << rest[1] << "\n";
+        return 1;
+    }
+
+    const std::vector<std::string> terms =
+        query_terms(std::vector<std::string>(rest.begin() + 2, rest.end()));
+
+    const std::vector<ScoredDocument> ranking =
+        score(terms, index, use_bm25 ? Scorer::Bm25 : Scorer::TfIdf, threads);
+
+    print_ranking(index, top_k(ranking, k));
+    return 0;
+}
 
 int cmd_lex(const std::vector<std::string>& args) {
     if (args.size() != 1) {
@@ -872,6 +1218,15 @@ int main(int argc, char** argv) {
     if (command == "corpus-write") {
         return cmd_corpus_write(rest);
     }
+    if (command == "query") {
+        return cmd_query(rest);
+    }
+    if (command == "repl") {
+        return cmd_repl(rest);
+    }
+    if (command == "snippet") {
+        return cmd_snippet(rest);
+    }
     if (command == "pool-sum") {
         return cmd_pool_sum(rest);
     }
@@ -880,6 +1235,15 @@ int main(int argc, char** argv) {
     }
     if (command == "index-size") {
         return cmd_index_size(rest);
+    }
+    if (command == "tfidf") {
+        return cmd_tfidf(rest);
+    }
+    if (command == "bm25") {
+        return cmd_bm25(rest);
+    }
+    if (command == "top") {
+        return cmd_top(rest);
     }
     if (command == "analyze-doc") {
         return cmd_analyze_doc(rest);
