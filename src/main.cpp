@@ -58,6 +58,7 @@ int usage() {
                  "      --all-hosts              follow links off the seed host\n"
                  "      --prefix <path>          follow only links whose path starts with this\n"
                  "      --max-per-host <n>       queue at most n pages from any one host\n"
+                 "      --concurrency <n>        fetch from up to n hosts at once\n"
                  "  analyze <text>               show the terms the analysis chain produces\n"
                  "\n"
                  "indexing:\n"
@@ -1071,6 +1072,12 @@ int cmd_crawl(const std::vector<std::string>& args) {
             options.user_agent = value;
         } else if (flag == "--prefix") {
             options.path_prefix = value;
+        } else if (flag == "--concurrency") {
+            if (!parse_count(value, options.concurrency) || options.concurrency == 0 ||
+                options.concurrency > 64) {
+                std::cerr << "search: concurrency must be between 1 and 64: " << value << "\n";
+                return 1;
+            }
         } else if (flag == "--max-per-host") {
             if (!parse_count(value, options.max_per_host)) {
                 std::cerr << "search: max-per-host must be a non-negative integer: " << value
