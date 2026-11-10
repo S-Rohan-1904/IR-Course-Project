@@ -65,7 +65,7 @@ int usage() {
                  "  index-write [--encoding <name>] [--threads <n>] <source> <file>\n"
                  "                               save an index to disk\n"
                  "  index-size <source>          encoded size under each encoding\n"
-                 "  pagerank [--iterations <n>] [--damping <d>] <links_file>\n"
+                 "  pagerank [--iterations <n>] [--damping <d>] [--out <file>] <links_file>\n"
                  "                               PageRank over a crawl's link graph\n"
                  "\n"
                  "retrieval:\n"
@@ -999,10 +999,13 @@ int cmd_pagerank(const std::vector<std::string>& args) {
     std::vector<std::string> rest = args;
     std::size_t iterations = 30;
     double damping = 0.85;
+    std::string out;
 
     while (rest.size() >= 2 && rest.front().starts_with("--")) {
         const std::string flag = rest.front();
-        if (flag == "--iterations") {
+        if (flag == "--out") {
+            out = rest[1];
+        } else if (flag == "--iterations") {
             if (!parse_count(rest[1], iterations)) {
                 std::cerr << "search: iterations must be a non-negative integer: " << rest[1]
                           << "\n";
@@ -1038,7 +1041,16 @@ int cmd_pagerank(const std::vector<std::string>& args) {
     }
 
     std::cout << std::fixed << std::setprecision(6);
-    for (const RankedPage& page : pagerank(links, iterations, damping)) {
+    const std::vector<RankedPage> ranking = pagerank(links, iterations, damping);
+    if (!out.empty()) {
+        if (!write_pagerank_file(out, ranking, error)) {
+            std::cerr << "search: " << error << "\n";
+            return 1;
+        }
+        return 0;
+    }
+
+    for (const RankedPage& page : ranking) {
         std::cout << page.page << " " << page.score << "\n";
     }
     return 0;
