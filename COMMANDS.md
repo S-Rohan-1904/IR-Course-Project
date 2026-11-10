@@ -43,6 +43,17 @@ tokenization, normalization, stopword removal and stemming.
 ./build/search repl <index.idx>
 ```
 
+## Spelling and completion
+
+```bash
+./build/search suggest <index.idx> recieve
+./build/search complete <index.idx> astro
+```
+
+`suggest` lists indexed terms within two edits of a misspelling, using a BK-tree
+over the dictionary. `complete` lists indexed terms that begin with a prefix,
+from a trie, most frequent first.
+
 ## Relevance (BEIR)
 
 ```bash

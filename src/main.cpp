@@ -16,6 +16,7 @@
 #include "analyzer.hpp"
 #include "beir.hpp"
 #include "bench.hpp"
+#include "complete.hpp"
 #include "corpus.hpp"
 #include "corpus_file.hpp"
 #include "crawler.hpp"
@@ -23,10 +24,12 @@
 #include "evaluator.hpp"
 #include "index.hpp"
 #include "index_io.hpp"
+#include "normalize.hpp"
 #include "pagerank.hpp"
 #include "query.hpp"
 #include "ranking.hpp"
 #include "results.hpp"
+#include "suggest.hpp"
 #include "url.hpp"
 #include "wiki_import.hpp"
 
@@ -69,6 +72,10 @@ int usage() {
                  "      --max-chars <n>          how long an excerpt may be\n"
                  "      --tsv                    id and score, tab separated\n"
                  "  repl [options] <source>      read queries until end of input\n"
+                 "  suggest [--max-distance <n>] [--limit <n>] <source> <word>\n"
+                 "                               dictionary terms near a misspelling\n"
+                 "  complete [--limit <n>] <source> <prefix>\n"
+                 "                               dictionary terms beginning with a prefix\n"
                  "\n"
                  "evaluation:\n"
                  "  evaluate [--cutoff <k>] [options] <source> <queries.jsonl> <qrels.tsv>\n"
@@ -702,6 +709,80 @@ int cmd_repl(const std::vector<std::string>& args) {
 }
 
 
+int cmd_suggest(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    std::size_t max_distance = 2;
+    std::size_t limit = 5;
+
+    while (rest.size() >= 2 && rest.front().starts_with("--")) {
+        const std::string flag = rest.front();
+        std::size_t value = 0;
+        if (!parse_count(rest[1], value)) {
+            std::cerr << "search: expected a number after " << flag << ": " << rest[1] << "\n";
+            return 1;
+        }
+        if (flag == "--max-distance") {
+            max_distance = value;
+        } else if (flag == "--limit") {
+            limit = value;
+        } else {
+            std::cerr << "search: unknown option: " << flag << "\n";
+            return 1;
+        }
+        rest.erase(rest.begin(), rest.begin() + 2);
+    }
+
+    if (rest.size() != 2) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(rest[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+
+    const std::vector<Token> analyzed = analyze(rest[1]);
+    if (analyzed.size() != 1) {
+        std::cerr << "search: not a single term: " << rest[1] << "\n";
+        return 1;
+    }
+
+    const BkTree tree = build_bk_tree(*opened);
+    for (const Suggestion& suggestion : tree.search(analyzed.front().text, max_distance, limit)) {
+        std::cout << suggestion.term << " " << suggestion.distance << " "
+                  << suggestion.document_frequency << "\n";
+    }
+    return 0;
+}
+
+int cmd_complete(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    std::size_t limit = 10;
+
+    if (rest.size() >= 2 && rest.front() == "--limit") {
+        if (!parse_count(rest[1], limit)) {
+            std::cerr << "search: limit must be a non-negative integer: " << rest[1] << "\n";
+            return 1;
+        }
+        rest.erase(rest.begin(), rest.begin() + 2);
+    }
+
+    if (rest.size() != 2) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(rest[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+
+    const Trie trie = build_trie(*opened);
+    for (const Completion& completion : trie.complete(normalize(rest[1]), limit)) {
+        std::cout << completion.term << " " << completion.document_frequency << "\n";
+    }
+    return 0;
+}
+
 int cmd_pagerank(const std::vector<std::string>& args) {
     std::vector<std::string> rest = args;
     std::size_t iterations = 30;
@@ -971,6 +1052,12 @@ int main(int argc, char** argv) {
     }
     if (command == "repl") {
         return cmd_repl(rest);
+    }
+    if (command == "suggest") {
+        return cmd_suggest(rest);
+    }
+    if (command == "complete") {
+        return cmd_complete(rest);
     }
     if (command == "evaluate") {
         return cmd_evaluate(rest);

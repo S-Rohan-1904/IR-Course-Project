@@ -49,6 +49,9 @@ add_executable(search
   src/fetcher.cpp
   src/crawler.cpp
   src/snippet.cpp
+  src/edit_distance.cpp
+  src/suggest.cpp
+  src/complete.cpp
   src/pagerank.cpp
   src/results.cpp
   src/bench.cpp
