@@ -31,6 +31,7 @@
 #include "query.hpp"
 #include "ranking.hpp"
 #include "results.hpp"
+#include "server.hpp"
 #include "suggest.hpp"
 #include "url.hpp"
 #include "wiki_import.hpp"
@@ -80,6 +81,8 @@ int usage() {
                  "                               dictionary terms near a misspelling\n"
                  "  complete [--limit <n>] <source> <prefix>\n"
                  "                               dictionary terms beginning with a prefix\n"
+                 "  serve [--stdin] [--port <n>] [query options] <source>\n"
+                 "                               search from a browser on 127.0.0.1\n"
                  "\n"
                  "evaluation:\n"
                  "  evaluate [--cutoff <k>] [options] <source> <queries.jsonl> <qrels.tsv>\n"
@@ -316,7 +319,7 @@ std::optional<PageRankPrior> open_prior(const std::string& source, const Inverte
     return PageRankPrior::load(beside, index, error);
 }
 
-bool persist_pagerank(const std::string& source, const std::string& index_file) {
+bool persist_crawl_sidecars(const std::string& source, const std::string& index_file) {
     const std::optional<std::filesystem::path> links = links_beside(source);
     if (!links.has_value()) {
         return true;
@@ -329,7 +332,82 @@ bool persist_pagerank(const std::string& source, const std::string& index_file) 
         std::cerr << "search: " << error << "\n";
         return false;
     }
+
+    std::error_code ec;
+    const std::filesystem::path urls = std::filesystem::path(source) / "urls.tsv";
+    if (std::filesystem::is_regular_file(urls, ec)) {
+        std::filesystem::copy_file(urls, index_file + ".urls",
+                                   std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            std::cerr << "search: cannot write " << index_file << ".urls: " << ec.message()
+                      << "\n";
+            return false;
+        }
+    }
     return true;
+}
+
+int cmd_serve(const std::vector<std::string>& args) {
+    std::vector<std::string> rest = args;
+    std::size_t port = 8080;
+    bool from_stdin = false;
+    if (!rest.empty() && rest.front() == "--stdin") {
+        from_stdin = true;
+        rest.erase(rest.begin());
+    }
+    if (rest.size() >= 2 && rest.front() == "--port") {
+        if (!parse_count(rest[1], port) || port == 0 || port > 65535) {
+            std::cerr << "search: port must be between 1 and 65535: " << rest[1] << "\n";
+            return 1;
+        }
+        rest.erase(rest.begin(), rest.begin() + 2);
+    }
+
+    QueryOptions options;
+    if (!take_query_options(rest, options)) {
+        return 1;
+    }
+    if (rest.size() != 1) {
+        return usage();
+    }
+
+    const std::optional<InvertedIndex> opened = open_index(rest[0]);
+    if (!opened.has_value()) {
+        return 1;
+    }
+
+    std::string error;
+    const std::optional<PageRankPrior> prior = open_prior(rest[0], *opened, error);
+    if (!prior.has_value() && options.pagerank_weight > 0.0) {
+        std::cerr << "search: " << error << "\n";
+        return 1;
+    }
+
+    const std::unique_ptr<CorpusReader> corpus = open_snippet_corpus(rest[0], options, true);
+    std::error_code ec;
+    const std::string urls = std::filesystem::is_directory(rest[0], ec)
+                                 ? (std::filesystem::path(rest[0]) / "urls.tsv").string()
+                                 : rest[0] + ".urls";
+
+    SearchService service(*opened, corpus.get(), prior.has_value() ? &*prior : nullptr,
+                          read_urls(urls), options);
+
+    if (from_stdin) {
+        const std::string raw((std::istreambuf_iterator<char>(std::cin)),
+                              std::istreambuf_iterator<char>());
+        const std::optional<HttpRequest> request = parse_request(raw);
+        std::cout << serialize(request.has_value()
+                                   ? service.handle(*request)
+                                   : HttpResponse{400, "text/plain; charset=utf-8",
+                                                  "bad request\n"});
+        return 0;
+    }
+
+    if (!serve(service, static_cast<int>(port), error)) {
+        std::cerr << "search: " << error << "\n";
+        return 1;
+    }
+    return 0;
 }
 
 int cmd_wiki_import(const std::vector<std::string>& args) {
@@ -1081,7 +1159,7 @@ int cmd_index_write(const std::vector<std::string>& args) {
         std::cerr << "search: " << error << "\n";
         return 1;
     }
-    return persist_pagerank(rest[0], rest[1]) ? 0 : 1;
+    return persist_crawl_sidecars(rest[0], rest[1]) ? 0 : 1;
 }
 
 int cmd_index_size(const std::vector<std::string>& args) {
@@ -1176,6 +1254,9 @@ int main(int argc, char** argv) {
     }
     if (command == "complete") {
         return cmd_complete(rest);
+    }
+    if (command == "serve") {
+        return cmd_serve(rest);
     }
     if (command == "evaluate") {
         return cmd_evaluate(rest);
