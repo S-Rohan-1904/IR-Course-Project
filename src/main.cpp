@@ -665,7 +665,28 @@ int cmd_query(const std::vector<std::string>& args) {
     return 0;
 }
 
-int repl_meta_command(const std::string& line, QueryOptions& options, bool& quit) {
+struct ReplLexicon {
+    const InvertedIndex& index;
+    std::optional<BkTree> spelling;
+    std::optional<Trie> prefixes;
+
+    const BkTree& tree() {
+        if (!spelling.has_value()) {
+            spelling = build_bk_tree(index);
+        }
+        return *spelling;
+    }
+
+    const Trie& trie() {
+        if (!prefixes.has_value()) {
+            prefixes = build_trie(index);
+        }
+        return *prefixes;
+    }
+};
+
+int repl_meta_command(const std::string& line, QueryOptions& options, ReplLexicon& lexicon,
+                      bool& quit) {
     std::istringstream words(line);
     std::string name;
     std::string value;
@@ -681,6 +702,7 @@ int repl_meta_command(const std::string& line, QueryOptions& options, bool& quit
                      ":scorer <name>  bm25 or tfidf\n"
                      ":snippet <on|off>\n"
                      ":pagerank <w>   weight of link authority, 0 is off\n"
+                     ":complete <p>   indexed terms beginning with a prefix\n"
                      ":settings       show the current settings\n"
                      ":quit\n";
         return 0;
@@ -705,6 +727,12 @@ int repl_meta_command(const std::string& line, QueryOptions& options, bool& quit
             options.scorer = Scorer::TfIdf;
         } else {
             std::cout << "scorer must be bm25 or tfidf\n";
+        }
+        return 0;
+    }
+    if (name == ":complete") {
+        for (const Completion& completion : lexicon.trie().complete(normalize(value), 10)) {
+            std::cout << completion.term << " " << completion.document_frequency << "\n";
         }
         return 0;
     }
@@ -763,6 +791,7 @@ int cmd_repl(const std::vector<std::string>& args) {
     }
 
     const bool interactive = isatty(STDIN_FILENO) != 0;
+    ReplLexicon lexicon{*opened, std::nullopt, std::nullopt};
 
     std::string line;
     while (true) {
@@ -782,7 +811,7 @@ int cmd_repl(const std::vector<std::string>& args) {
 
         if (line.front() == ':') {
             bool quit = false;
-            repl_meta_command(line, options, quit);
+            repl_meta_command(line, options, lexicon, quit);
             if (quit) {
                 break;
             }
@@ -798,6 +827,12 @@ int cmd_repl(const std::vector<std::string>& args) {
             continue;
         }
 
+        if (!options.tsv) {
+            if (const std::optional<std::string> corrected =
+                    correct_query(line, *opened, lexicon.tree())) {
+                std::cout << "did you mean: " << *corrected << "\n";
+            }
+        }
         print_results(std::cout, *results, options);
     }
 
