@@ -55,6 +55,7 @@ int usage() {
                  "      --max-depth <n>          follow links at most n deep\n"
                  "      --user-agent <name>      the name robots.txt is matched against\n"
                  "      --all-hosts              follow links off the seed host\n"
+                 "      --prefix <path>          follow only links whose path starts with this\n"
                  "  analyze <text>               show the terms the analysis chain produces\n"
                  "\n"
                  "indexing:\n"
@@ -953,6 +954,8 @@ int cmd_crawl(const std::vector<std::string>& args) {
             options.output_dir = value;
         } else if (flag == "--user-agent") {
             options.user_agent = value;
+        } else if (flag == "--prefix") {
+            options.path_prefix = value;
         } else if (flag == "--max-pages") {
             if (!parse_count(value, options.max_pages)) {
                 std::cerr << "search: max-pages must be a non-negative integer: " << value << "\n";
