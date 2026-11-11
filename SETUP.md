@@ -14,6 +14,7 @@ Everything below takes about twenty minutes, most of it downloading Wikipedia.
 | CMake | 3.20 or newer |
 | A C++20 compiler | GCC 12+, Clang 15+, or Apple Clang 15+ |
 | libcurl | optional, only the crawler needs it |
+| Python 3 | 3.9+, only for `tools/analyze.py` |
 
 Without libcurl the build still succeeds; the crawler then works against
 already-downloaded pages and cannot fetch over HTTP. Nothing else is affected.
@@ -115,8 +116,24 @@ gzcat corpus/wikipedia/simplewiki-*-cirrussearch-content.json.gz \
   corpus/wikipedia/simplewiki.corpus corpus/wikipedia/simplewiki.idx
 ```
 
-That takes well under a minute on 8 cores, and peaks at a few gigabytes, which
-is the reason a block-wise build is on the list of work still to do. 
+That takes well under a minute on 8 cores and peaks at a few gigabytes. If that
+is more memory than you want to give it, build in blocks instead. The output is
+the same, byte for byte, at whatever peak you choose:
+
+```bash
+./build/search index-build --block 5000 \
+  corpus/wikipedia/simplewiki.corpus corpus/wikipedia/simplewiki.idx
+```
+
+Smaller blocks use less memory and take slightly longer.
+
+When documents in a corpus directory are added, changed or removed,
+`index-update` re-analyzes only those, found by content hash, and writes the
+same index a full rebuild would:
+
+```bash
+./build/search index-update corpus/fixtures fixtures.idx
+```
 Then:
 
 ```bash
@@ -147,7 +164,9 @@ found automatically if it sits beside the index under the same name
 ```
 
 Prints build times at one and all threads, the phase breakdown, compression, query
-percentiles, and peak memory.
+percentiles, and peak memory for both the in-memory and the block build. It also
+checks that the block build's output is byte-identical to the in-memory build's,
+and says so in the table.
 
 Takes about four minutes on the Wikipedia corpus. Try it on the fixtures first
 to see the shape of the output:
@@ -158,9 +177,24 @@ to see the shape of the output:
 
 Your numbers will differ from ours, since the machine and the dump differ. The
 relationships are what should hold: startup should be milliseconds rather than
-seconds, and the parallel build should beat the single-threaded one.
+seconds, the parallel build should beat the single-threaded one, and the block
+build should use a fraction of the memory.
 
-## 6. Measure relevance
+## 6. Analyse a query set
+
+```bash
+./tools/analyze.py corpus/wikipedia/simplewiki.idx
+./tools/analyze.py corpus/wikipedia/simplewiki.idx my_queries.txt --limit 20 --scorer tfidf
+```
+
+Where `bench.sh` answers "how fast", this answers "how fast, and what came
+back": per-query latency, how many results each query found, which found
+nothing, the score distribution, and the weakest top results. It reports wall
+clock per invocation including process startup, which is a different number
+from the in-process figure `bench query` reports. The query file is one query
+per line.
+
+## 7. Measure relevance
 
 The ranking is scored against [BEIR](https://github.com/beir-cellar/beir),
 whose corpora, queries and relevance judgements are public and independent, and
@@ -182,15 +216,15 @@ queries 300
 unjudged 809
 scorer bm25
 cutoff 10
-ndcg_at_10 0.6714
-precision_at_10 0.0897
+ndcg_at_10 0.6845
+precision_at_10 0.0910
 max_precision_at_10 0.1130
-recall_at_10 0.8130
-f1_at_10 0.1596
-mrr_at_10 0.6315
-map 0.6256
-r_precision 0.5208
-recall_at_100 0.9126
+recall_at_10 0.8239
+f1_at_10 0.1619
+mrr_at_10 0.6449
+map 0.6407
+r_precision 0.5359
+recall_at_100 0.9249
 ```
 
 Precision@10 looks low because 277 of SciFact's 300 test queries have exactly
@@ -200,12 +234,14 @@ for each query's own judgements, which is why it is the number BEIR publishes
 and the one to compare.
 
 SciFact is 2.8 MB and takes under a minute end to end. The published BEIR BM25
-baseline for it is 0.665.
+baseline for it is 0.665. `--scorer bm25f`, which weights title matches, scores
+0.6925.
 
 TREC-COVID (`trec-covid.zip`, 74 MB, 171,331 documents) works the same way and
-is the next dataset we plan to score.
+scores 0.6632 with BM25 and 0.6853 with BM25F, against a published baseline of
+0.656.
 
-## 7. Crawling
+## 8. Crawling
 
 If libcurl was found at build time:
 
@@ -225,6 +261,8 @@ src/          the engine, one concern per file pair
 queries/      query logs for the benchmark
 tools/
   bench.sh            the benchmark table
+  analyze.py          query-set analytics
+  merge_crawls.py     combine crawls into one corpus and link graph
   fetch_wikipedia.sh  download and import a Wikipedia dump
 corpus/
   fixtures/   the 30-document corpus, checked in

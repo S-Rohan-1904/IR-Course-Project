@@ -19,7 +19,18 @@ cmake --build build -j
 ```
 
 Prints build time at one and all threads, the phase breakdown, compression,
-query p50/p95/p99, and peak memory.
+query p50/p95/p99, peak memory for both build strategies, and whether the block
+build is byte-identical to the in-memory one.
+
+## Analyze a query set
+
+```bash
+./tools/analyze.py <index> [query_file] [--limit N] [--repeats N] [--scorer bm25|tfidf]
+./tools/analyze.py corpus/wikipedia/simplewiki.idx my_queries.txt --limit 20
+```
+
+Per-query latency and result counts, which queries returned nothing, score
+distribution, latency histogram. Needs a built index (`.idx`).
 
 ## Inspect the analysis chain
 
@@ -28,12 +39,23 @@ query p50/p95/p99, and peak memory.
 ```
 
 Prints position, byte offset and final term for each token that survives
-tokenization, normalization, stopword removal and stemming.
+tokenization, normalization, stopword removal and stemming. Each step can also
+be run on its own, along with tools for postings, parse trees and urls; the
+`inspection` section of `./build/search` with no arguments lists them:
+
+```bash
+./build/search stem running
+./build/search parse 'solar AND (system OR "wind power")'
+./build/search postings corpus/fixtures dog
+./build/search robots <robots.txt> mybot /private/page
+```
 
 ## Build an index
 
 ```bash
-./build/search index-write --threads 8 <corpus> <index.idx>
+./build/search index-write --threads 8 <corpus> <index.idx>          # in memory, fast
+./build/search index-build --block 5000 <corpus> <index.idx>         # bounded memory
+./build/search index-update <corpus_dir> <index.idx>                 # only what changed
 ```
 
 ## Query

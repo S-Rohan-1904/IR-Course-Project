@@ -38,7 +38,7 @@ Text is split on whitespace, and compounds are split again at hyphens, slashes a
 
 ### Indexing
 
-A positional inverted index stores (doc id, term frequency, positions) for each term. Doc ids and positions are stored as gaps and variable-byte encoded. The corpus is split into slices that are indexed on separate threads, then merged in slice order, so the file is byte-identical regardless of the thread count. Opening an index is an mmap plus a header read, finding a term is a binary search, and a postings list is decoded only when a query needs it.
+A positional inverted index stores (doc id, term frequency, positions) for each term. Doc ids and positions are stored as gaps and variable-byte encoded. The corpus is split into slices that are indexed on separate threads, then merged in slice order, so the file is byte-identical regardless of the thread count. For corpora larger than memory, `index-build` indexes a block of documents at a time and merges the blocks in one pass over sorted term streams; its output is byte-identical to the in-memory build. `index-update` re-indexes only the documents whose content hash changed. Opening an index is an mmap plus a header read, finding a term is a binary search, and a postings list is decoded only when a query needs it.
 
 ### Retrieval and ranking
 
@@ -107,13 +107,13 @@ The serial merge takes 4.3 s of the 15.5 s build, which is why 8 threads give
 
 Done: importers, text analysis, the compressed positional index with parallel
 build and mmap loading, boolean and phrase queries, TF-IDF, BM25 and BM25F
-ranking with snippets, BEIR evaluation on SciFact and TREC-COVID, a parallel
-crawler run against real sites, PageRank mixed into the text score, spelling
-correction and autocomplete, and a browser front end.
+ranking with snippets, a block-based build for indexes larger than memory,
+incremental re-indexing by content hash, BEIR evaluation on SciFact and
+TREC-COVID, a parallel crawler run against real sites, PageRank mixed into the
+text score, spelling correction and autocomplete, and a browser front end.
 
-Not done: a block-based build for indexes larger than memory, incremental
-re-indexing by content hash, and WAND pruning for OR queries, which is only
-worth it if profiling shows scoring and not decoding is the cost.
+Not done: WAND pruning for OR queries, which is only worth it if profiling
+shows scoring and not decoding is the cost.
 
 ## Who did what
 
