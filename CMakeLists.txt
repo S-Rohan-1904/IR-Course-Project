@@ -10,8 +10,6 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-# GCC builds on macOS default to an older deployment target than the installed
-# SDK, and the linker then warns once per object file. Match the SDK instead.
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
   execute_process(
     COMMAND xcrun --show-sdk-version
@@ -71,8 +69,6 @@ add_executable(search
 target_include_directories(search PRIVATE src)
 target_link_libraries(search PRIVATE Threads::Threads)
 
-# HTTP fetching is optional: without libcurl the crawler still runs against a
-# mirrored site on disk.
 if(CURL_FOUND)
   target_link_libraries(search PRIVATE CURL::libcurl)
   target_compile_definitions(search PRIVATE SEARCH_HAVE_CURL)

@@ -13,8 +13,6 @@
 
 namespace {
 
-// A BEIR record: its id, and the text to index, which is the title and the
-// body together the way the benchmark's own baselines index them.
 struct Record {
     std::string id;
     std::string text;
@@ -54,8 +52,6 @@ bool read_records(const std::filesystem::path& path, std::vector<Record>& out, s
     return true;
 }
 
-// The stored form of a document: the title line the corpus reader expects,
-// then the body.
 std::string as_document(const Record& record) {
     const std::size_t split = record.text.find("\n\n");
     if (split == std::string::npos) {
@@ -64,7 +60,6 @@ std::string as_document(const Record& record) {
     return "title: " + record.text.substr(0, split) + "\n\n" + record.text.substr(split + 2);
 }
 
-// query id -> (document id -> graded relevance)
 using Qrels = std::unordered_map<std::string, std::unordered_map<std::string, int>>;
 
 bool read_qrels(const std::filesystem::path& path, Qrels& out, std::string& error) {
@@ -121,8 +116,6 @@ double discount(std::size_t rank) {
     return 1.0 / std::log2(static_cast<double>(rank) + 2.0);
 }
 
-// nDCG at `cutoff`: the ranking's discounted gain over the best possible
-// discounted gain for the same judgements.
 double ndcg(const std::vector<QueryResult>& results,
             const std::unordered_map<std::string, int>& judged, std::size_t cutoff) {
     double actual = 0.0;
@@ -253,9 +246,6 @@ bool evaluate_relevance(const InvertedIndex& index, const std::filesystem::path&
             continue;
         }
 
-        // Retrieve deep enough that every measure is exact rather than
-        // truncated: 100 for recall_at_100, k for the at_k measures, and one
-        // rank per relevant document for R-precision.
         const std::size_t relevant = judged->second.size();
         QueryOptions run = options;
         run.limit = std::max(std::max<std::size_t>(100, cutoff), relevant);
@@ -268,10 +258,6 @@ bool evaluate_relevance(const InvertedIndex& index, const std::filesystem::path&
             continue;
         }
 
-        // One pass over the ranking collects every rank-dependent quantity:
-        // hits inside k, inside 100 and inside R, the rank of the first hit,
-        // and the running sum of precision at each hit that average precision
-        // is defined as.
         std::size_t hits_at_k = 0;
         std::size_t hits_at_100 = 0;
         std::size_t hits_at_r = 0;
@@ -315,8 +301,6 @@ bool evaluate_relevance(const InvertedIndex& index, const std::filesystem::path&
                                static_cast<double>(relevant);
         r_precision_total += static_cast<double>(hits_at_r) /
                              static_cast<double>(relevant);
-        // Averaged over the relevant documents, not over the ones found, so a
-        // ranking that misses relevant documents is penalised for missing them.
         average_precision_total += precision_sum_at_hits / static_cast<double>(relevant);
         if (first_hit_rank != 0 && first_hit_rank <= cutoff) {
             reciprocal_rank_total += 1.0 / static_cast<double>(first_hit_rank);

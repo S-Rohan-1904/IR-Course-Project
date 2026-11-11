@@ -12,15 +12,8 @@
 #include "index.hpp"
 #include "pagerank.hpp"
 
-// Which link graph the PageRank prior comes from. `Page` ranks every crawled
-// page by the links between pages. `Site` ranks hosts by the links between
-// different hosts and credits each host's score to its home page; see
-// siterank.hpp. `Home` reads no links: every home page gets the same score,
-// the control that showed most of the site-level gain is preferring home
-// pages at all.
 enum class LinkGraph { Page, Site, Home };
 
-// "page", "site" or "home", as the flags, REPL and URLs spell them.
 std::optional<LinkGraph> parse_link_graph(std::string_view text);
 const char* link_graph_name(LinkGraph graph);
 
@@ -40,15 +33,10 @@ private:
     std::size_t covered_ = 0;
 };
 
-// The priors a source has, at most one per graph. A REPL session or a server
-// switches graph per query, so every prior the source can supply is loaded
-// once up front and looked up here; a graph the source has nothing for is
-// simply absent.
 class PriorSet {
 public:
     void add(LinkGraph graph, PageRankPrior prior);
 
-    // Null when the source has no prior for this graph.
     const PageRankPrior* find(LinkGraph graph) const;
 
 private:

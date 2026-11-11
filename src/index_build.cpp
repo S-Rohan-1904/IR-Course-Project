@@ -20,9 +20,6 @@ double elapsed_ms(Clock::time_point from, Clock::time_point to) {
     return std::chrono::duration<double, std::milli>(to - from).count();
 }
 
-// The output is written in the same version 4 layout the in-memory encoder
-// produces, but streamed: the tables whose contents are only known at the end
-// are written after the data they describe, and the header points at them.
 class StreamWriter {
 public:
     explicit StreamWriter(std::ofstream& out) : out_(out) {}
@@ -64,11 +61,10 @@ private:
     std::size_t cursor_ = 0;
 };
 
-// One block file, positioned at a term, waiting its turn in the merge.
 struct Cursor {
     MappedIndex index;
     std::size_t slot = 0;
-    std::size_t base = 0;  // this block's first document ordinal in the output
+    std::size_t base = 0;
 };
 
 constexpr unsigned char kMagic[4] = {'S', 'I', 'D', 'X'};
@@ -95,8 +91,6 @@ bool build_index_external(const std::filesystem::path& source,
 
     const std::vector<std::string>& ids = corpus->document_ids();
 
-    // Blocks go beside the output, so they land on the same filesystem and are
-    // covered by whatever space check the caller already did on it.
     const std::filesystem::path block_prefix = output.string() + ".block";
     std::vector<std::filesystem::path> block_paths;
 
@@ -188,10 +182,6 @@ bool build_index_external(const std::filesystem::path& source,
         }
     }
 
-    // The offset tables come before the data they describe, matching what the
-    // in-memory encoder writes, so the two produce the same bytes. Their
-    // contents are only known afterwards, so space is reserved here and filled
-    // in at the end along with the header.
     const std::size_t id_offsets_at = writer.cursor();
     for (std::size_t i = 0; i <= report.documents; i++) {
         writer.fixed64(0);
@@ -207,15 +197,6 @@ bool build_index_external(const std::filesystem::path& source,
     }
     id_offsets.push_back(writer.cursor());
 
-    // The merge. Every block's terms are sorted, so the next term to write is
-    // the smallest across the cursors, and only the blocks holding it advance.
-    // How many distinct terms the merge will write. The table has to be sized
-    // exactly, because the entries follow it and an over-long table would push
-    // them along and produce a different file from the in-memory encoder's.
-    //
-    // Counting is a pass over the term names alone -- no postings are decoded,
-    // and the names are already in mapped memory -- so it costs a walk of the
-    // dictionaries rather than a second look at the corpus.
     std::size_t term_count = 0;
     {
         std::vector<std::size_t> slots(cursors.size(), 0);
@@ -269,8 +250,6 @@ bool build_index_external(const std::filesystem::path& source,
             break;
         }
 
-        // Postings are gathered in block order, and blocks partition the
-        // documents in ordinal order, so the merged list is already ascending.
         std::vector<Posting> merged;
         for (Cursor& cursor : cursors) {
             if (cursor.slot >= cursor.index.term_count() ||
@@ -327,7 +306,6 @@ bool build_index_external(const std::filesystem::path& source,
     patch(id_offsets_at, id_offsets);
     patch(term_offsets_at, term_offsets);
 
-    // Everything the header points at is now placed, so go back and fill it in.
     out.seekp(static_cast<std::streamoff>(header_at));
     const std::uint64_t fields[8] = {report.documents,  report.terms,   report.postings,
                                      lengths_at,        fingerprints_at, id_offsets_at,

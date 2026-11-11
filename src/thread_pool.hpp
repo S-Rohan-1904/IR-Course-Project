@@ -10,18 +10,8 @@
 #include <utility>
 #include <vector>
 
-// A fixed set of worker threads pulling tasks off one queue.
-//
-// Threads are expensive to create and cheap to reuse, so the pool is built once
-// and handed work repeatedly. Every task runs exactly once, on whichever worker
-// takes it, and submit() hands back a future for the result.
-//
-// The pool joins its workers in the destructor, so no task outlives it and
-// nothing needs to be shut down by hand.
 class ThreadPool {
 public:
-    // Starts `threads` workers. A count of 0 is treated as 1, so a caller can
-    // pass a computed value without guarding it.
     explicit ThreadPool(std::size_t threads);
     ~ThreadPool();
 
@@ -30,11 +20,6 @@ public:
 
     std::size_t size() const { return workers_.size(); }
 
-    // Queues `task` and returns a future for its result.
-    //
-    // Tasks start in submission order but finish in whatever order they finish,
-    // so a caller wanting determinism must impose it on the results rather than
-    // expect it from the pool.
     template <typename Task>
     auto submit(Task task) -> std::future<decltype(task())> {
         using Result = decltype(task());

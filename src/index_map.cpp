@@ -72,9 +72,6 @@ void write_number(std::vector<unsigned char>& out, std::uint64_t value, IndexEnc
     }
 }
 
-// Reads one number and advances the cursor. The mapped file was validated when
-// it was opened, so a cursor that runs past the end is a corrupt file rather
-// than an expected case; it stops rather than reading on.
 std::uint64_t read_number(const unsigned char* data, std::size_t size, std::size_t& at,
                          IndexEncoding encoding) {
     if (encoding == IndexEncoding::VarByte) {
@@ -114,14 +111,14 @@ std::vector<unsigned char> encode_index_v3(const InvertedIndex& index, IndexEnco
     out.push_back(static_cast<unsigned char>(encoding));
 
     const std::size_t counts_at = out.size();
-    put_u64(out, 0);  // document_count
-    put_u64(out, 0);  // term_count
-    put_u64(out, 0);  // posting_count
+    put_u64(out, 0);
+    put_u64(out, 0);
+    put_u64(out, 0);
     const std::size_t tables_at = out.size();
-    put_u64(out, 0);  // lengths
-    put_u64(out, 0);  // fingerprints
-    put_u64(out, 0);  // id offsets
-    put_u64(out, 0);  // term offsets
+    put_u64(out, 0);
+    put_u64(out, 0);
+    put_u64(out, 0);
+    put_u64(out, 0);
     put_u64(out, 0);
 
     IndexSizeReport sizes{};
@@ -142,8 +139,6 @@ std::vector<unsigned char> encode_index_v3(const InvertedIndex& index, IndexEnco
         put_u64(out, pack_title(index.document_title(doc_id)));
     }
 
-    // Ids as one blob plus a table of where each starts, so the last entry
-    // bounds the one before it and reading id N never scans ids 0..N-1.
     const std::size_t id_offsets_at = out.size();
     for (std::size_t i = 0; i <= documents; i++) {
         put_u64(out, 0);
@@ -253,7 +248,6 @@ std::optional<MappedIndex> MappedIndex::open(const std::filesystem::path& path,
     index.term_offsets_at_ = static_cast<std::size_t>(read_u64(data, 57));
     index.titles_at_ = static_cast<std::size_t>(read_u64(data, 65));
 
-    // Every table is fixed width, so one bounds check each covers all of it.
     const std::size_t documents = index.document_count_;
     const std::size_t terms = index.term_count_;
     if (index.lengths_at_ > size || size - index.lengths_at_ < documents * 8 ||
@@ -330,8 +324,6 @@ std::string_view MappedIndex::term_at(std::size_t slot) const {
 }
 
 std::vector<Posting> MappedIndex::postings(std::string_view term) const {
-    // The term table is sorted, so this is a binary search over mapped bytes:
-    // nothing is decoded except the few term names the search lands on.
     std::size_t low = 0;
     std::size_t high = term_count_;
     while (low < high) {

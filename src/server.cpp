@@ -348,8 +348,6 @@ SearchService::Answer SearchService::answer(const HttpRequest& request) {
     return out;
 }
 
-// The options that differ from the ones the server was started with, as URL
-// parameters, so a link out of a results page keeps the reader's settings.
 std::string SearchService::carried(const QueryOptions& options) const {
     std::string out;
     const auto add = [&out](const char* name, const std::string& value) {
@@ -379,8 +377,6 @@ std::string SearchService::carried(const QueryOptions& options) const {
     return out;
 }
 
-// The settings panel under the search box. Every field carries the server's
-// default, and the page script leaves a field at its default out of the URL.
 std::string SearchService::controls(const QueryOptions& options) const {
     std::ostringstream out;
     const auto disabled = [](bool off) { return off ? " disabled data-off" : ""; };

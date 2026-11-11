@@ -188,10 +188,6 @@ std::vector<Token> InvertedIndex::document_terms(std::size_t doc_id) const {
 }
 
 const std::vector<std::string>& InvertedIndex::document_ids() const {
-    // The mapped file stores ids as bytes, and a caller that wants the whole
-    // list wants them as strings. Building that list is the one thing here
-    // that is proportional to the corpus, so it happens on demand rather than
-    // at open time: a query prints ten ids and never asks for the rest.
     if (mapped_ && document_ids_.size() != mapped_->mapped.document_count()) {
         const std::lock_guard<std::mutex> guard(mapped_->mutex);
         if (document_ids_.size() != mapped_->mapped.document_count()) {
@@ -305,11 +301,6 @@ InvertedIndex update_index(const InvertedIndex& previous,
 void InvertedIndex::append(InvertedIndex other) {
     const std::size_t offset = document_ids_.size();
 
-    // Merging is serial, so it bounds how much a parallel build can win. Two
-    // things keep it off the critical path: reserving once, so a merge of a
-    // million terms does not rehash on the way, and moving a whole postings
-    // list across when the term is new here, rather than moving its postings
-    // one at a time into a freshly grown vector.
     postings_.reserve(postings_.size() + other.postings_.size());
 
     for (auto& [term, list] : other.postings_) {

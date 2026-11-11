@@ -307,9 +307,6 @@ std::optional<InvertedIndex> read_index_file(const std::filesystem::path& path,
         return std::nullopt;
     }
 
-    // Version 3 is mapped rather than read, which is the whole point of it.
-    // An older file has no tables to map, so it still goes through the decoder
-    // that built the index in memory.
     std::string mapped_error;
     std::optional<MappedIndex> mapped = MappedIndex::open(path, mapped_error);
     if (mapped.has_value()) {

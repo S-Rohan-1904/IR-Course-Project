@@ -170,7 +170,6 @@ int usage() {
     return 2;
 }
 
-// Reports a corpus directory that does not exist. Returns the exit code.
 int reject_missing_corpus(const std::filesystem::path& corpus_dir) {
     std::cerr << "search: not a directory: " << corpus_dir.string() << "\n";
     return 1;
@@ -531,13 +530,6 @@ bool take_query_options(std::vector<std::string>& args, QueryOptions& options) {
     return true;
 }
 
-// Where to read document text from when a query asks for snippets.
-//
-// An index file does not hold the text a snippet is cut from, so querying one
-// used to accept --snippet and print nothing. A corpus directory or .corpus
-// file is its own answer; for an index file, the corpus that built it is
-// looked for beside it under the same stem, which is what index-write leaves
-// there. `--corpus` overrides both.
 std::optional<std::filesystem::path> corpus_for_snippets(const std::string& source,
                                                          const QueryOptions& options) {
     if (!options.corpus.empty()) {
@@ -558,9 +550,6 @@ std::optional<std::filesystem::path> corpus_for_snippets(const std::string& sour
     return std::nullopt;
 }
 
-// Opens the corpus for snippets, or returns nullptr when there is none. A
-// corpus that cannot be opened is not an error: the query still answers, it
-// just answers without excerpts.
 std::unique_ptr<CorpusReader> open_snippet_corpus(const std::string& source,
                                                   const QueryOptions& options, bool wanted) {
     if (!wanted) {
@@ -852,8 +841,6 @@ int cmd_beir_import(const std::vector<std::string>& args) {
 int cmd_evaluate(const std::vector<std::string>& args) {
     std::vector<std::string> rest = args;
 
-    // --cutoff is this command's own, so it is taken before the query options
-    // that query, repl and evaluate share.
     std::size_t cutoff = 10;
     for (std::size_t i = 0; i + 1 < rest.size(); i++) {
         if (rest[i] != "--cutoff") {
@@ -986,8 +973,6 @@ int cmd_bench(const std::vector<std::string>& args) {
             return usage();
         }
 
-        // The only flag here whose value is not a number: where snippet text
-        // comes from, when it is not beside the index.
         if (argument == "--corpus") {
             snippet_corpus = args[i + 1];
             i++;
@@ -1275,8 +1260,6 @@ int cmd_repl(const std::vector<std::string>& args) {
         return 1;
     }
 
-    // The REPL can turn snippets on later with :snippet, so the corpus is
-    // opened up front rather than at the first query that needs it.
     const std::unique_ptr<CorpusReader> corpus = open_snippet_corpus(rest[0], options, true);
 
     const std::optional<PriorSet> priors = open_priors(rest[0], *opened, options);

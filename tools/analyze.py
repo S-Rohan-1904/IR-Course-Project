@@ -1,23 +1,4 @@
 #!/usr/bin/env python3
-"""Run a query log against an index and report what came back, not just how fast.
-
-    ./tools/analyze.py <index> [query_file] [--limit N] [--repeats N] [--scorer bm25|tfidf]
-
-    ./tools/analyze.py corpus/wikipedia/simplewiki.idx
-    ./tools/analyze.py simplewiki.idx my_queries.txt --limit 20
-
-`search bench query` answers "how fast". This answers "how fast, and what
-happened": per-query latency, how many results each query found, which queries
-found nothing, and how the score distribution looks. A query that is fast
-because it matched nothing is the failure this is meant to catch -- it is the
-exact bug that once made this project's own benchmark report 231,481 queries a
-second over an empty index.
-
-Timings are wall clock around one subprocess per query, so they include process
-startup. That is the number a person at a terminal actually waits for, and it
-is deliberately not the same as the in-process figure `bench query` reports.
-"""
-
 import argparse
 import pathlib
 import statistics
@@ -37,7 +18,6 @@ def percentile(values, fraction):
 
 
 def run_query(index, query, limit, scorer):
-    """One query. Returns (milliseconds, [(doc_id, score)]) or (ms, None) if rejected."""
     started = time.perf_counter()
     finished = subprocess.run(
         [str(BINARY), "query", "--tsv", "--limit", str(limit), "--scorer", scorer,
@@ -61,7 +41,6 @@ def run_query(index, query, limit, scorer):
 
 
 def histogram(counts, width=40):
-    """A bar per bucket, scaled to the biggest one."""
     if not counts:
         return []
     biggest = max(n for _, n in counts) or 1
@@ -96,9 +75,6 @@ def main():
     print(f"scorer   {args.scorer}, limit {args.limit}, {args.repeats} repeats")
     print()
 
-    # One untimed pass so the page cache is warm. The first read of a large
-    # index off disk is not what an interactive tool does after its first query,
-    # and mixing the two into one average describes neither.
     run_query(args.index, queries[0], args.limit, args.scorer)
 
     rows = []
@@ -156,8 +132,6 @@ def main():
         print("  min %.4f   median %.4f   max %.4f" % (
             min(tops), statistics.median(tops), max(tops)))
 
-        # A top result scoring far below the rest usually means the query found
-        # something technically matching and not what was asked for.
         weakest = sorted(((r[0][1], q) for q, _, r in answered))[:3]
         print("  weakest: " + ", ".join("%s (%.4f)" % (q[:24], s) for s, q in weakest))
         print()

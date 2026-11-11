@@ -12,7 +12,7 @@ namespace {
 struct Word {
     std::size_t begin;
     std::size_t end;
-    std::size_t term_index;  // index into the query terms, or npos
+    std::size_t term_index;
     std::size_t highlight_begin = 0;
     std::size_t highlight_end = 0;
 };
