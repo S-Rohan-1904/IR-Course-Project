@@ -12,6 +12,8 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 #include "normalize.hpp"
 
@@ -20,7 +22,7 @@ namespace {
 const char* const kStyle =
     "body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem;"
     "color:#1d1d1f;background:#fff}"
-    "form{display:flex;gap:.5rem;margin-bottom:1.5rem}"
+    "form{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1.5rem}"
     ".box{position:relative;flex:1}"
     "input[name=q]{width:100%;box-sizing:border-box;font:inherit;padding:.5rem .75rem;"
     "border:1px solid #c7c7cc;border-radius:6px}"
@@ -38,10 +40,21 @@ const char* const kStyle =
     ".url{color:#1a7f37;font-size:.85rem;word-break:break-all}"
     ".score{color:#6e6e73;font-size:.8rem}"
     ".snippet{margin:.25rem 0 0}.note{color:#6e6e73}"
+    ".options{flex-basis:100%;font-size:.9rem;color:#3a3a3c}"
+    ".options summary{cursor:pointer;color:#6e6e73;width:max-content}"
+    ".grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(13rem,1fr));"
+    "gap:.6rem 1rem;margin-top:.6rem}"
+    ".grid label{display:flex;flex-direction:column;gap:.2rem}"
+    ".grid small{color:#6e6e73;font-size:.75rem}"
+    ".grid input,.grid select{font:inherit;padding:.3rem .5rem;border:1px solid #c7c7cc;"
+    "border-radius:6px;background:#fff;color:inherit}"
+    ".grid :disabled{opacity:.5}"
     "@media (prefers-color-scheme:dark){body{color:#f5f5f7;background:#1c1c1e}"
     "input[name=q]{background:#2c2c2e;color:#f5f5f7;border-color:#48484a}"
     "#suggest{background:#2c2c2e;border-color:#48484a}#suggest li span{color:#a1a1a6}"
     "#suggest li[aria-selected=true]{background:#1f3d63}"
+    ".options{color:#d1d1d6}.options summary,.grid small{color:#a1a1a6}"
+    ".grid input,.grid select{background:#2c2c2e;border-color:#48484a}"
     ".url{color:#4ac26b}.score,.note{color:#a1a1a6}a{color:#6cb6ff}}";
 
 const char* const kScript =
@@ -73,7 +86,13 @@ const char* const kScript =
     "active=(active-1+items.length)%items.length;mark();}"
     "else if((e.key==='Enter'||e.key==='Tab')&&active>=0){e.preventDefault();pick(active);}"
     "else if(e.key==='Escape'){close();}});"
-    "input.addEventListener('blur',()=>setTimeout(close,100));})();";
+    "input.addEventListener('blur',()=>setTimeout(close,100));})();"
+    "(()=>{const form=document.querySelector('form');const fields=()=>"
+    "form.querySelectorAll('[data-default]');"
+    "form.addEventListener('submit',()=>fields().forEach(f=>{"
+    "if(f.value===f.dataset.default||f.value===''){f.disabled=true;}}));"
+    "addEventListener('pageshow',()=>fields().forEach(f=>{"
+    "f.disabled=f.hasAttribute('data-off');}));})();";
 
 bool parse_weight(const std::string& text, double& out) {
     try {
@@ -107,7 +126,7 @@ bool parse_limit(const std::string& text, std::size_t& out) {
     return true;
 }
 
-bool parse_word_count(const std::string& text, std::size_t& out) {
+bool parse_small_count(const std::string& text, std::size_t& out) {
     if (text.empty() || text.size() > 4) {
         return false;
     }
@@ -139,7 +158,14 @@ std::string flatten(const std::string& text) {
     return out;
 }
 
-std::string page(const std::string& query, const std::string& content) {
+std::string format_number(double value) {
+    std::ostringstream out;
+    out << value;
+    return out.str();
+}
+
+std::string page(const std::string& query, const std::string& controls,
+                 const std::string& content) {
     std::ostringstream out;
     out << "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
         << "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -150,7 +176,8 @@ std::string page(const std::string& query, const std::string& content) {
         << "\" aria-label=\"Query\" autocomplete=\"off\" role=\"combobox\""
         << " aria-autocomplete=\"list\" aria-controls=\"suggest\" aria-expanded=\"false\""
         << " autofocus><ul id=\"suggest\" role=\"listbox\" hidden></ul></div>"
-        << "<button type=\"submit\">Search</button></form>" << content << "<script>" << kScript
+        << "<button type=\"submit\">Search</button>" << controls << "</form>" << content
+        << "<script>" << kScript
         << "</script></body></html>\n";
     return out.str();
 }
@@ -263,8 +290,38 @@ SearchService::Answer SearchService::answer(const HttpRequest& request) {
 
     const auto max_words = request.query.find("max_words");
     if (max_words != request.query.end() &&
-        !parse_word_count(max_words->second, out.options.pagerank_max_words)) {
+        !parse_small_count(max_words->second, out.options.pagerank_max_words)) {
         out.error = "max_words must be a whole number below 10000";
+        return out;
+    }
+
+    const auto scorer = request.query.find("scorer");
+    if (scorer != request.query.end()) {
+        const std::optional<Scorer> parsed = parse_scorer(scorer->second);
+        if (!parsed.has_value()) {
+            out.error = "scorer must be bm25, bm25f or tfidf";
+            return out;
+        }
+        out.options.scorer = *parsed;
+    }
+
+    const auto snippet = request.query.find("snippet");
+    if (snippet != request.query.end()) {
+        if (snippet->second == "on") {
+            out.options.snippets = corpus_ != nullptr;
+        } else if (snippet->second == "off") {
+            out.options.snippets = false;
+        } else {
+            out.error = "snippet must be on or off";
+            return out;
+        }
+    }
+
+    const auto max_chars = request.query.find("max_chars");
+    if (max_chars != request.query.end() &&
+        (!parse_small_count(max_chars->second, out.options.snippet_chars) ||
+         out.options.snippet_chars == 0)) {
+        out.error = "max_chars must be a whole number from 1 to 9999";
         return out;
     }
 
@@ -291,6 +348,93 @@ SearchService::Answer SearchService::answer(const HttpRequest& request) {
     return out;
 }
 
+// The options that differ from the ones the server was started with, as URL
+// parameters, so a link out of a results page keeps the reader's settings.
+std::string SearchService::carried(const QueryOptions& options) const {
+    std::string out;
+    const auto add = [&out](const char* name, const std::string& value) {
+        out += std::string("&") + name + "=" + url_encode(value);
+    };
+    if (options.limit != defaults_.limit) {
+        add("limit", std::to_string(options.limit));
+    }
+    if (options.scorer != defaults_.scorer) {
+        add("scorer", scorer_name(options.scorer));
+    }
+    if (options.snippets != defaults_.snippets) {
+        add("snippet", options.snippets ? "on" : "off");
+    }
+    if (options.snippet_chars != defaults_.snippet_chars) {
+        add("max_chars", std::to_string(options.snippet_chars));
+    }
+    if (options.pagerank_weight != defaults_.pagerank_weight) {
+        add("pagerank", format_number(options.pagerank_weight));
+    }
+    if (options.pagerank_graph != defaults_.pagerank_graph) {
+        add("graph", link_graph_name(options.pagerank_graph));
+    }
+    if (options.pagerank_max_words != defaults_.pagerank_max_words) {
+        add("max_words", std::to_string(options.pagerank_max_words));
+    }
+    return out;
+}
+
+// The settings panel under the search box. Every field carries the server's
+// default, and the page script leaves a field at its default out of the URL.
+std::string SearchService::controls(const QueryOptions& options) const {
+    std::ostringstream out;
+    const auto disabled = [](bool off) { return off ? " disabled data-off" : ""; };
+    const auto number = [&out, &disabled](const char* label, const char* name,
+                                          const std::string& value, const std::string& fallback,
+                                          const char* range, const char* hint, bool off) {
+        out << "<label>" << label << "<input type=\"number\" name=\"" << name << "\" value=\""
+            << value << "\" data-default=\"" << fallback << "\" " << range << disabled(off)
+            << "><small>" << hint << "</small></label>";
+    };
+    const auto choice = [&out, &disabled](const char* label, const char* name,
+                                          const std::string& value, const std::string& fallback,
+                                          const std::vector<std::pair<std::string, bool>>& values,
+                                          const char* hint, bool off) {
+        out << "<label>" << label << "<select name=\"" << name << "\" data-default=\"" << fallback
+            << "\"" << disabled(off) << ">";
+        for (const auto& [option, available] : values) {
+            out << "<option" << (option == value ? " selected" : "")
+                << (available ? "" : " disabled") << ">" << option << "</option>";
+        }
+        out << "</select><small>" << hint << "</small></label>";
+    };
+
+    std::vector<std::pair<std::string, bool>> graphs;
+    bool any_graph = false;
+    for (const LinkGraph graph : {LinkGraph::Page, LinkGraph::Site, LinkGraph::Home}) {
+        const bool available = priors_.find(graph) != nullptr;
+        graphs.emplace_back(link_graph_name(graph), available);
+        any_graph = any_graph || available;
+    }
+    const bool no_corpus = corpus_ == nullptr;
+
+    out << "<details class=\"options\"" << (carried(options).empty() ? "" : " open")
+        << "><summary>Options</summary><div class=\"grid\">";
+    number("Results", "limit", std::to_string(options.limit), std::to_string(defaults_.limit),
+           "min=\"1\" max=\"100\"", "1 to 100", false);
+    choice("Scorer", "scorer", scorer_name(options.scorer), scorer_name(defaults_.scorer),
+           {{"bm25", true}, {"bm25f", true}, {"tfidf", true}}, "bm25f weighs titles", false);
+    choice("Snippets", "snippet", options.snippets ? "on" : "off",
+           defaults_.snippets ? "on" : "off", {{"on", true}, {"off", true}},
+           no_corpus ? "no document text for this index" : "excerpt under each result",
+           no_corpus);
+    number("Link authority", "pagerank", format_number(options.pagerank_weight),
+           format_number(defaults_.pagerank_weight), "min=\"0\" step=\"any\"",
+           any_graph ? "PageRank weight, 0 is off" : "no link graph for this index", !any_graph);
+    choice("Link graph", "graph", link_graph_name(options.pagerank_graph),
+           link_graph_name(defaults_.pagerank_graph), graphs, "page, site or home", !any_graph);
+    number("Short queries only", "max_words", std::to_string(options.pagerank_max_words),
+           std::to_string(defaults_.pagerank_max_words), "min=\"0\" max=\"9999\"",
+           "max words for link authority, 0 is any", !any_graph);
+    out << "</div></details>";
+    return out.str();
+}
+
 HttpResponse SearchService::html(const Answer& answer) const {
     std::ostringstream content;
     if (!answer.error.empty()) {
@@ -299,7 +443,7 @@ HttpResponse SearchService::html(const Answer& answer) const {
 
     if (answer.suggestion.has_value()) {
         content << "<p>Did you mean <a href=\"/search?q=" << url_encode(*answer.suggestion)
-                << "\">" << html_escape(*answer.suggestion) << "</a>?</p>";
+                << html_escape(carried(answer.options)) << "\">" << html_escape(*answer.suggestion) << "</a>?</p>";
     }
 
     const bool asked = answer.query.find_first_not_of(" \t") != std::string::npos;
@@ -332,7 +476,7 @@ HttpResponse SearchService::html(const Answer& answer) const {
 
     HttpResponse response;
     response.status = answer.error.empty() ? 200 : 400;
-    response.body = page(answer.query, content.str());
+    response.body = page(answer.query, controls(answer.options), content.str());
     return response;
 }
 

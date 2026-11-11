@@ -35,6 +35,8 @@ private:
     std::string title_of(const std::string& document_id) const;
     std::string url_of(const std::string& document_id) const;
     HttpResponse html(const Answer& answer) const;
+    std::string controls(const QueryOptions& options) const;
+    std::string carried(const QueryOptions& options) const;
     HttpResponse json(const Answer& answer) const;
     const BkTree& tree();
     const Trie& trie();
