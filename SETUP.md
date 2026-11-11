@@ -118,7 +118,7 @@ postings: 343
    Dogs and [Cats] Together Dogs and [cats] can live together in one house. ...
 ```
 
-Queries understand `AND`, `OR`, `NOT`, parentheses and `"quoted phrases"`:
+Queries can include `AND`, `OR`, `NOT`, parentheses and `"quoted phrases"`:
 
 ```bash
 ./build/search query fixtures.idx '"black cat" OR dog'
