@@ -1,214 +1,273 @@
 # Setting up
 
-From a fresh clone to a working search engine over Wikipedia, and the
-benchmarks that measure it.
+This guide sets up the search engine over Simple English Wikipedia, then on to the benchmarks and the relevance scores.
 
-Everything below takes about twenty minutes, most of it downloading Wikipedia.
+- Run every command from the top folder of the repository
+- Look in [Troubleshooting](#troubleshooting) for any problems that occur during the setup.
 
 ---
 
-## 1. What you need
+## Step 1. Install the tools
 
-| | |
-|---|---|
-| CMake | 3.20 or newer |
-| A C++20 compiler | GCC 12+, Clang 15+, or Apple Clang 15+ |
-| libcurl | optional, only the crawler needs it |
-| Python 3 | 3.9+, only for `tools/analyze.py` |
+- Git
+- CMake 3.20 or newer
+- C++20 compiler
+- curl
+- Python 3 (for running helper scripts)
+- libcurl (without it everything works except fetching web pages in the crawler)
 
-Without libcurl the build still succeeds; the crawler then works against
-already-downloaded pages and cannot fetch over HTTP. Nothing else is affected.
-
-macOS:
+**macOS**
 
 ```bash
-brew install cmake curl
+xcode-select --install
 ```
-
-Debian or Ubuntu:
 
 ```bash
-sudo apt install cmake g++ libcurl4-openssl-dev
+brew install cmake curl python
 ```
 
-## 2. Build
+**Check Version**
+
+```bash
+cmake --version
+```
+
+This project requires CMake 3.20 or newer.
+
+**Ubuntu or Debian**
+
+```bash
+sudo apt update && sudo apt install -y git cmake g++ curl unzip python3 libcurl4-openssl-dev
+```
+
+**Check Version**
+
+```bash
+cmake --version
+```
+
+This project requires CMake 3.20 or newer.
+
+## Step 2. Get the code
+
+Skip this step if you already have cloned the repo.
+
+```bash
+git clone https://github.com/S-Rohan-1904/IR-Course-Project.git
+```
+
+```bash
+cd IR-Course-Project
+```
+
+## Step 3. Build
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+```
+
+```bash
 cmake --build build -j
 ```
 
-You should get `build/search`. Check it:
+**Check**
 
 ```bash
 ./build/search
 ```
 
-That prints every command. Nothing so far has touched the network or written
-outside `build/`.
+It prints `usage: search <command> [args...]` followed by every command, grouped under preprocessing, indexing, retrieval, evaluation and inspection.
 
-### If the build fails
+If the build stops with an error, see [Build errors](#build-errors). On some Macs the default compiler is broken, and the fix is one extra install which can be found using the above link.
 
-**Undefined `std::__cxx11` symbols at link time, on macOS.** Your environment
-is pointing the compiler at one standard library's headers while linking
-another, usually a `CPLUS_INCLUDE_PATH` set for Homebrew GCC while CMake picks
-Apple Clang. Build in a shell without it:
+## Step 4. Try it on the small test corpus
 
-```bash
-env -u CPLUS_INCLUDE_PATH cmake --build build -j
-```
+The repository includes 30 short handwritten documents in `corpus/fixtures`, so you can check everything works in this small dataset before downloading the large wikipedia dataset.
 
-**A missing standard header such as `<filesystem>`, on macOS.** Some Command
-Line Tools installs are missing `/Library/Developer/CommandLineTools/usr/include/c++/v1`.
-Point CMake at a complete toolchain instead:
-
-```bash
-brew install llvm
-cmake -S . -B build -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++
-cmake --build build -j
-```
-
-Both of these look like project bugs and are not. Check the toolchain before
-the code.
-
-## 3. A first index, in ten seconds
-
-The repository ships a 30-document corpus, so you can try everything before
-downloading anything.
+Build an index:
 
 ```bash
 ./build/search index-write corpus/fixtures fixtures.idx
-./build/search query --snippet fixtures.idx 'cat'
+```
+
+This creates `fixtures.idx`. Look at stats of the index
+
+```bash
+./build/search index-stats fixtures.idx
+```
+
+```
+documents: 30
+terms: 235
+postings: 343
+```
+
+`--snippet` flag indicates search with snippets.
+`--corpus` flag indicates where the original text is (the index doesn't store it)
+
+```bash
+./build/search query --snippet --corpus corpus/fixtures --limit 3 fixtures.idx 'cat'
+```
+
+```
+1. doc_003  2.5076
+   The Black [Cat] A black [cat] crossed the road at night. The black [cat] was hunting a mouse. ...
+2. doc_001  2.3900
+   [Cats] and Mats The [cat] sat on the mat. The [cat] was happy on that mat. ...
+3. doc_004  2.1294
+   Dogs and [Cats] Together Dogs and [cats] can live together in one house. ...
+```
+
+Queries understand `AND`, `OR`, `NOT`, parentheses and `"quoted phrases"`:
+
+```bash
+./build/search query fixtures.idx '"black cat" OR dog'
+```
+
+For an interactive prompt, start the REPL, type queries, and type `:quit` to leave. 
+`:help` lists the settings you can change there.
+
+```bash
 ./build/search repl fixtures.idx
 ```
 
-In the REPL, `:help` lists what it understands. Queries take `AND`, `OR`,
-`NOT`, parentheses and `"quoted phrases"`.
+### Incremental updates
 
-## 4. A real corpus: Simple English Wikipedia
-
-About 600 MB downloaded, 400 MB after import, 188 MB as an index.
-
-Wikipedia publishes CirrusSearch dumps, the same data its own search runs on,
-with templates and markup already stripped. That is why these rather than
-`pages-articles`: the wikitext stripper is the hard part of importing
-Wikipedia, and it has been done properly upstream.
+`index-update` re-indexes only the documents that were added, changed or removed, and writes the same file a full rebuild would. Try it on a copy of the fixtures:
 
 ```bash
-./tools/fetch_wikipedia.sh
+cp -r corpus/fixtures corpus/mydocs
 ```
-
-Or by hand, dumps are kept for about three months, so check the index page at
-`https://dumps.wikimedia.org/other/cirrussearch/` for a current date:
 
 ```bash
-mkdir -p corpus/wikipedia && cd corpus/wikipedia
-curl -O https://dumps.wikimedia.org/other/cirrussearch/current/simplewiki-20251229-cirrussearch-content.json.gz
+./build/search index-write corpus/mydocs mydocs.idx
 ```
 
-Import it, then build the index:
+Create a new file named `doc_031.txt` with some content. Its first line must be `title: ` followed by a title, then a blank line, then the text content.
 
 ```bash
-gzcat corpus/wikipedia/simplewiki-*-cirrussearch-content.json.gz \
-  | ./build/search wiki-import - corpus/wikipedia/simplewiki.corpus
-
-./build/search index-write --threads 8 \
-  corpus/wikipedia/simplewiki.corpus corpus/wikipedia/simplewiki.idx
+rm corpus/mydocs/doc_030.txt
 ```
-
-That takes well under a minute on 8 cores and peaks at a few gigabytes. If that
-is more memory than you want to give it, build in blocks instead. The output is
-the same, byte for byte, at whatever peak you choose:
 
 ```bash
-./build/search index-build --block 5000 \
-  corpus/wikipedia/simplewiki.corpus corpus/wikipedia/simplewiki.idx
+./build/search index-update corpus/mydocs mydocs.idx
 ```
 
-Smaller blocks use less memory and take slightly longer.
-
-When documents in a corpus directory are added, changed or removed,
-`index-update` re-analyzes only those, found by content hash, and writes the
-same index a full rebuild would:
+```
+added 1
+updated 0
+removed 1
+unchanged 29
+```
 
 ```bash
-./build/search index-update corpus/fixtures fixtures.idx
+./build/search query mydocs.idx <word from the new file>
 ```
-Then:
+
+This prints `1. doc_031` and a score.
+
+## Step 5. Download and import Wikipedia
 
 ```bash
-./build/search query --snippet corpus/wikipedia/simplewiki.idx 'solar system'
+./tools/fetch_wikipedia.sh simple --yes
 ```
 
-That should come back in about 50 milliseconds.
+This finds the newest Simple English Wikipedia dump, downloads it (640 MB) into `corpus/wikipedia/`, and imports it into one packed file, `corpus/wikipedia/simplewiki.corpus`. 
 
-### Query the index, not the corpus
+## Step 6. Build the Wikipedia index
 
 ```bash
-./build/search query simplewiki.idx 'solar system'      # 50 ms
-./build/search query simplewiki.corpus 'solar system'   # 40 seconds
+./build/search index-write --threads 8 corpus/wikipedia/simplewiki.corpus corpus/wikipedia/simplewiki.idx
 ```
 
-Both work, and the second one rebuilds the entire index before answering.
-Pass a `.corpus` file only when you mean to build; pass the `.idx` to search.
+Check it:
 
-Snippets need the document text, which an index does not store. The corpus is
-found automatically if it sits beside the index under the same name
-(`simplewiki.idx` next to `simplewiki.corpus`), or you can say where it is with
-`--corpus`.
+```bash
+./build/search index-stats corpus/wikipedia/simplewiki.idx
+```
 
-## 5. Reproduce the benchmarks
+```
+documents: 278214
+terms: 1204562
+postings: 26162711
+```
+
+This build needs about 3 GB of memory. On a machine with less memory use `--block`.
+
+```bash
+./build/search index-build --block 5000 corpus/wikipedia/simplewiki.corpus corpus/wikipedia/simplewiki.idx
+```
+
+Smaller blocks use less memory but take a little longer.
+
+## Step 7. Search Wikipedia Index
+
+```bash
+./build/search query --snippet --limit 3 corpus/wikipedia/simplewiki.idx 'solar system'
+```
+
+```
+1. doc_00015284  15.9926
+   ...Renewable energy Renewable resource [Solar] power "[Solar] [systems] projects"...
+2. doc_00010853  15.8629
+   Small [solar] [system] body A small [Solar] [System] body (SSSB) is a term defined ...
+3. doc_00015295  15.5636
+   ...
+```
+
+### Spelling suggestions and prefix completion:
+
+```bash
+./build/search suggest corpus/wikipedia/simplewiki.idx 'astronmy'
+```
+
+```bash
+./build/search complete corpus/wikipedia/simplewiki.idx 'photosyn'
+```
+
+### Serve frontend:
+
+```bash
+./build/search serve corpus/wikipedia/simplewiki.idx
+```
+
+The frontend will be served in [http://127.0.0.1:8080](http://127.0.0.1:8080)
+
+## Step 8. Run the benchmarks
 
 ```bash
 ./tools/bench.sh corpus/wikipedia/simplewiki.corpus
 ```
-
-Prints build times at one and all threads, the phase breakdown, compression, query
-percentiles, and peak memory for both the in-memory and the block build. It also
-checks that the block build's output is byte-identical to the in-memory build's,
-and says so in the table.
-
-Takes about four minutes on the Wikipedia corpus. Try it on the fixtures first
-to see the shape of the output:
-
-```bash
-./tools/bench.sh corpus/fixtures queries/fixtures.txt
-```
-
-Your numbers will differ from ours, since the machine and the dump differ. The
-relationships are what should hold: startup should be milliseconds rather than
-seconds, the parallel build should beat the single-threaded one, and the block
-build should use a fraction of the memory.
-
-## 6. Analyse a query set
+To see what each query returned (needs Python 3):
 
 ```bash
 ./tools/analyze.py corpus/wikipedia/simplewiki.idx
-./tools/analyze.py corpus/wikipedia/simplewiki.idx my_queries.txt --limit 20 --scorer tfidf
 ```
 
-Where `bench.sh` answers "how fast", this answers "how fast, and what came
-back": per-query latency, how many results each query found, which found
-nothing, the score distribution, and the weakest top results. It reports wall
-clock per invocation including process startup, which is a different number
-from the in-process figure `bench query` reports. The query file is one query
-per line.
+This runs the queries in `queries/wikipedia.txt` and reports latency per query, how many results each found, which found nothing, and the score spread.
 
-## 7. Measure relevance
+## Step 9. Measure relevance on BEIR SciFact
 
-The ranking is scored against [BEIR](https://github.com/beir-cellar/beir),
-whose corpora, queries and relevance judgements are public and independent, and
-which publishes BM25 baselines to compare against.
+[BEIR](https://github.com/beir-cellar/beir) publishes corpora, test queries and relevance judgements, plus BM25 baselines to compare against. SciFact is small (3 MB, 5,183 abstracts, 300 test queries).
 
 ```bash
-mkdir -p corpus/beir && cd corpus/beir
-curl -O https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip
-unzip scifact.zip && cd ../..
+mkdir -p corpus/beir && curl -L -o corpus/beir/scifact.zip https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip
+```
 
+```bash
+unzip -o -q corpus/beir/scifact.zip -d corpus/beir
+```
+
+```bash
 ./build/search beir-import corpus/beir/scifact/corpus.jsonl corpus/beir/scifact.corpus
+```
+
+```bash
 ./build/search index-write corpus/beir/scifact.corpus corpus/beir/scifact.idx
-./build/search evaluate corpus/beir/scifact.idx \
-  corpus/beir/scifact/queries.jsonl corpus/beir/scifact/qrels/test.tsv
+```
+
+```bash
+./build/search evaluate corpus/beir/scifact.idx corpus/beir/scifact/queries.jsonl corpus/beir/scifact/qrels/test.tsv
 ```
 
 ```
@@ -227,48 +286,77 @@ r_precision 0.5359
 recall_at_100 0.9249
 ```
 
-Precision@10 looks low because 277 of SciFact's 300 test queries have exactly
-one relevant document, so no ranking can score above 0.1130, which is what
-`max_precision_at_10` reports. nDCG@10 divides by the best ranking achievable
-for each query's own judgements, which is why it is the number BEIR publishes
-and the one to compare.
+nDCG@10 is the number to compare: BEIR publishes 0.665 for BM25 on SciFact. Precision@10 looks low because 277 of the 300 queries have only one relevant document, so no ranking can score above 0.1130 (`max_precision_at_10`).
 
-SciFact is 2.8 MB and takes under a minute end to end. The published BEIR BM25
-baseline for it is 0.665. `--scorer bm25f`, which weights title matches, scores
-0.6925.
+Other scorers:
 
-TREC-COVID (`trec-covid.zip`, 74 MB, 171,331 documents) works the same way and
-scores 0.6632 with BM25 and 0.6853 with BM25F, against a published baseline of
-0.656.
+```bash
+./build/search evaluate --scorer bm25f corpus/beir/scifact.idx corpus/beir/scifact/queries.jsonl corpus/beir/scifact/qrels/test.tsv
+```
 
-## 8. Crawling
+This gives `ndcg_at_10 0.6925`. `--scorer tfidf` gives the baseline.
 
-If libcurl was found at build time:
+TREC-COVID works the same way: replace `scifact` with `trec-covid` in every command above. It is 74 MB and 171,331 documents, and scores 0.6632 with BM25 and 0.6853 with BM25F, against a published 0.656.
+
+## Step 10. Crawl the web (optional)
+
+This step needs libcurl.
 
 ```bash
 ./build/search crawl https://example.com --max-pages 100 --out corpus/crawled
+```
+
+```bash
 ./build/search index-write corpus/crawled crawled.idx
 ```
 
-The crawler reads `robots.txt` and obeys it, rate limits itself per host, and
-drops pages whose content hashes to something already seen. Point it at your
-own sites, or at ones whose terms permit it.
+The crawler obeys `robots.txt`, limits its request rate per host, and skips pages whose content it has already seen. Crawl your own sites, or ones whose terms allow it. [COMMANDS.md](COMMANDS.md) shows PageRank over a crawl.
 
-## Where things live
+---
 
-```
-src/          the engine, one concern per file pair
-queries/      query logs for the benchmark
-tools/
-  bench.sh            the benchmark table
-  analyze.py          query-set analytics
-  merge_crawls.py     combine crawls into one corpus and link graph
-  fetch_wikipedia.sh  download and import a Wikipedia dump
-corpus/
-  fixtures/   the 30-document corpus, checked in
-  wikipedia/  gitignored
-  beir/       gitignored
+## Troubleshooting
+
+### Build errors
+
+**`fatal error: 'algorithm' file not found`** (or `<filesystem>`, `<vector>`, or any other standard header), on macOS. The Command Line Tools install is incomplete. Build with Homebrew's compiler instead, starting from a clean `build` folder:
+
+```bash
+brew install gcc
 ```
 
-Corpora and indexes are gitignored. Nothing large is in the repository, and
-nothing in it needs the network to build.
+```bash
+rm -rf build && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=$(ls /opt/homebrew/bin/g++-[0-9]* | sort -V | tail -1)
+```
+
+```bash
+cmake --build build -j
+```
+
+**Undefined `std::__cxx11` symbols when linking**, on macOS. `CPLUS_INCLUDE_PATH` is set in your shell, so the compiler reads one standard library's headers and links another. Build without it:
+
+```bash
+env -u CPLUS_INCLUDE_PATH cmake --build build -j
+```
+
+**`CMake 3.20 or higher is required`.** Your CMake is too old. Install a newer one with `brew install cmake`, or on Linux with `pip install cmake`.
+
+### Running errors
+
+**`bench build needs a corpus directory or a .corpus file`**, or **`not a corpus file`**, for a `.corpus` file that exists. The import in step 5 did not finish, so the file has no header. Delete it and run step 5 again:
+
+```bash
+rm corpus/wikipedia/simplewiki.corpus
+```
+
+```bash
+./tools/fetch_wikipedia.sh simple --yes
+```
+
+**`not a directory`** or **`no such corpus`.** The path is wrong either you are not in the repository's top folder, or an earlier step did not finish. Run `ls CMakeLists.txt` to check the folder.
+
+
+**No snippets, only document ids and scores.** The index cannot find the text. Put the corpus next to the index with the same name, or add `--corpus <corpus>`.
+
+**The index build is killed, or the machine starts swapping.** Not enough memory. Use `index-build --block 5000` (step 6), or a smaller block.
+
+**`this build cannot fetch over http`.** libcurl was not found when you built. Install it (step 1), then delete `build` and repeat step 3.

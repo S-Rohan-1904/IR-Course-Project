@@ -15,12 +15,10 @@ cmake --build build -j
 ./tools/bench.sh <corpus> [query_file]
 
 ./tools/bench.sh corpus/fixtures queries/fixtures.txt   # ~5s, sanity check
-./tools/bench.sh corpus/wikipedia/simplewiki.corpus     # ~4 min, full table
+./tools/bench.sh corpus/wikipedia/simplewiki.corpus     # ~4 min, full report
 ```
 
-Prints build time at one and all threads, the phase breakdown, compression,
-query p50/p95/p99, peak memory for both build strategies, and whether the block
-build is byte-identical to the in-memory one.
+Prints build time at one and all threads, the phase breakdown, compression, query p50/p95/p99, peak memory for both build strategies, and whether the block build is byte-identical to the in-memory one.
 
 ## Analyze a query set
 
@@ -29,8 +27,7 @@ build is byte-identical to the in-memory one.
 ./tools/analyze.py corpus/wikipedia/simplewiki.idx my_queries.txt --limit 20
 ```
 
-Per-query latency and result counts, which queries returned nothing, score
-distribution, latency histogram. Needs a built index (`.idx`).
+Per-query latency and result counts, which queries returned nothing, score distribution, latency histogram. Needs a built index (`.idx`).
 
 ## Inspect the analysis chain
 
@@ -38,10 +35,7 @@ distribution, latency histogram. Needs a built index (`.idx`).
 ./build/search analyze 'The Cats were Running'
 ```
 
-Prints position, byte offset and final term for each token that survives
-tokenization, normalization, stopword removal and stemming. Each step can also
-be run on its own, along with tools for postings, parse trees and urls; the
-`inspection` section of `./build/search` with no arguments lists them:
+Prints position, byte offset and final term for each token that survives tokenization, normalization, stopword removal and stemming. Each step can also be run on its own, along with tools for postings, parse trees and urls; the `inspection` section of `./build/search` with no arguments lists them:
 
 ```bash
 ./build/search stem running
@@ -89,9 +83,7 @@ curl 'http://127.0.0.1:8080/api/search?q=python&limit=20&scorer=bm25f&snippet=on
 ./build/search complete <index.idx> astro
 ```
 
-`suggest` lists indexed terms within two edits of a misspelling, using a BK-tree
-over the dictionary. `complete` lists indexed terms that begin with a prefix,
-from a trie, most frequent first.
+`suggest` lists indexed terms within two edits of a misspelling, using a BK-tree over the dictionary. `complete` lists indexed terms that begin with a prefix, from a trie, most frequent first.
 
 ## Relevance (BEIR)
 
