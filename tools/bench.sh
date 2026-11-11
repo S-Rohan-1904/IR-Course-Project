@@ -81,7 +81,13 @@ start=$(date +%s%N 2>/dev/null || echo 0)
 end=$(date +%s%N 2>/dev/null || echo 0)
 startup_ms=$(awk -v a="$start" -v b="$end" 'BEGIN { printf "%.0f", (b - a) / 1000000 }')
 
+echo "measuring the block build..." >&2
 docs=$(echo "$BUILD1" | field documents)
+block=$(( docs / 10 + 1 ))
+EXT=$("$BIN" index-build --block "$block" "$CORPUS" "$INDEX.ext")
+EXT_RSS=$(peak_rss "$BIN" index-build --block "$block" "$CORPUS" "$INDEX.ext")
+if cmp -s "$INDEX" "$INDEX.ext"; then IDENTICAL="yes"; else IDENTICAL="NO"; fi
+rm -f "$INDEX.ext" "$INDEX.ext".block*
 
 echo "measuring compression..." >&2
 SIZES=$("$BIN" index-size "$INDEX")
@@ -106,6 +112,9 @@ echo "| Build, of which parallel indexing | $(echo "$BUILDN" | field index_ms) m
 echo "| Build, of which serial merge | $(echo "$BUILDN" | field merge_ms) ms | \`merge_ms\`, same |"
 echo "| Ingest rate | $(echo "$BUILDN" | field documents_per_second) docs/s, $(echo "$BUILDN" | field megabytes_per_second) MB/s | \`search bench build --threads $cores $CORPUS\` |"
 echo "| Peak memory, in-memory build | $(gb "$BUILD_RSS") GB | \`/usr/bin/time -l search index-write\` |"
+echo "| Peak memory, block build | $(gb "$EXT_RSS") GB | \`/usr/bin/time -l search index-build --block $block\` |"
+echo "| Block build, blocks used | $(echo "$EXT" | field blocks) | \`search index-build --block $block $CORPUS out\` |"
+echo "| Block build, byte-identical to in-memory build | $IDENTICAL | \`cmp\` of the two outputs |"
 echo "| Index, uncompressed | $(echo "$SIZES" | awk '/^plain/ {print $2}') bytes | \`search index-size <index>\` |"
 echo "| Index, delta + varbyte | $(echo "$SIZES" | awk '/^varbyte/ {print $2}') bytes | same |"
 echo "| Compression ratio | $(echo "$SIZES" | field ratio)x | same |"

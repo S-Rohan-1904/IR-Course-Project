@@ -64,6 +64,7 @@ add_executable(search
   src/index_map.cpp
   src/jsonl.cpp
   src/beir.cpp
+  src/index_build.cpp
   src/wiki_import.cpp
 )
 
