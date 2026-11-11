@@ -1,17 +1,4 @@
 #!/usr/bin/env bash
-# Download a Wikipedia CirrusSearch dump and build a corpus from it.
-#
-#   ./tools/fetch_wikipedia.sh simple             # ~640 MB, ~250k full articles
-#   ./tools/fetch_wikipedia.sh simple --abstracts # same download, opening paragraphs only
-#   ./tools/fetch_wikipedia.sh simple --yes       # skip the confirmation
-#
-# CirrusSearch dumps are what Wikipedia's own search runs on: article text with
-# templates, tables and markup already stripped upstream. The abstract dumps this
-# script used to fetch were discontinued by Wikimedia.
-#
-# The compressed dump is kept and decompressed on the fly into the importer, so
-# the multi-gigabyte JSON is never written to disk. Nothing is downloaded until
-# you confirm; the dump and the corpus are both gitignored.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -88,7 +75,6 @@ echo "Building the corpus..."
 gunzip -c "$GZ" | "$BIN" wiki-import $ABSTRACTS - "$CORPUS"
 
 echo
-echo "Done. Try:"
-echo "  $BIN index-stats $CORPUS"
-echo "  $BIN query --snippet $CORPUS 'solar system'"
-echo "  ./tools/bench.sh $CORPUS"
+echo "Done. Next, build the index and search it:"
+echo "  $BIN index-write --threads 8 $CORPUS ${CORPUS%.corpus}.idx"
+echo "  $BIN query --snippet ${CORPUS%.corpus}.idx 'solar system'"

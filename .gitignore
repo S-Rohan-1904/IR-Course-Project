@@ -12,3 +12,5 @@ corpus/beir/
 *.xml.gz
 *.json.gz
 corpus/crawl/
+corpus/crawled/
+corpus/mydocs/
