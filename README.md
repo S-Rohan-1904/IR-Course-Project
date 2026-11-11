@@ -19,7 +19,7 @@ Course project for **CS F469 Information Retrieval**, Group 3.
 $ ./build/search wiki-import simplewiki.json.gz simplewiki.corpus
 $ ./build/search index-write --threads 8 simplewiki.corpus simplewiki.idx
 $ ./build/search query --snippet simplewiki.idx 'solar system'
-1. doc_00015284  16.1311
+1. doc_00015284  15.9926
    ...Renewable energy Renewable resource [Solar] power "[Solar] [systems]
    projects"...
 ```
@@ -34,7 +34,7 @@ Wikipedia comes from the CirrusSearch dump (Simple English, 278,214 articles). B
 
 ### Text analysis
 
-Text is split on whitespace, and each token keeps its position and byte offset. Tokens are then lowercased, stripped of punctuation and folded from Latin-1 and Latin Extended-A to plain ASCII. Stopwords are removed after that, and what is left goes through the Porter stemmer.
+Text is split on whitespace, and compounds are split again at hyphens, slashes and dashes, so `COVID-19` indexes as `covid` and `19`. Each token keeps its position and byte offset. Tokens are then lowercased, stripped of punctuation and folded from Latin-1 and Latin Extended-A to plain ASCII. Stopwords are removed after that, and what is left goes through the Porter stemmer.
 
 ### Indexing
 
@@ -42,19 +42,21 @@ A positional inverted index stores (doc id, term frequency, positions) for each 
 
 ### Retrieval and ranking
 
-Queries are parsed into a boolean tree (binding: NOT > AND > OR). Matched documents are then scored with BM25 as the main scorer (k1 = 1.2, b = 0.75) and TF-IDF as the baseline. Scoring is sharded by document rather than by term for fault tolerance. Top-k uses a min-heap. Snippets are cut from the original text using the stored byte offsets.
+Queries are parsed into a boolean tree (binding: NOT > AND > OR). Matched documents are then scored with BM25 as the main scorer (k1 = 1.2, b = 0.75) and TF-IDF as the baseline. BM25F splits each term's frequency into title and body by position, normalizes each by its own field length, and weights the title twice the body before saturating. Scoring is sharded by document rather than by term for fault tolerance. Top-k uses a min-heap. Snippets are cut from the original text using the stored byte offsets. A misspelled query term gets a "did you mean" from a BK-tree over the dictionary, and prefixes complete from a trie, both in the REPL and in `search serve`, a small HTTP front end with a search page and a JSON API.
 
 ### Link analysis
 
 PageRank scores each page by how many pages link to it, and how important those pages are. We run it on the links the crawler found, using the usual settings (0.85 damping, 30 rounds). Pages with no outgoing links still pass on their score, and a page linking to the same page twice counts once.
+
+With `--pagerank <w>` the text score is multiplied by 1 + w * ln(1 + N * pagerank), so link authority reorders matching documents but never adds a non-matching one. The graph can be pages, sites (each site's score given to its home page), or a flat boost to every home page as a control, and `--pagerank-max-words` limits it to short queries. The crawler fetches from many hosts in parallel while spacing requests to each one, caps pages per host, and can stay under a path prefix.
 
 ## Architecture
 
 ![System architecture](docs/architecture.svg)
 
 The top row builds the index, the middle row answers queries against it, and
-the bottom row is link analysis and evaluation. PageRank already runs over the
-crawler's link graph, but its scores are not yet mixed into the ranking.
+the bottom row is link analysis and evaluation. PageRank scores, when a weight
+is given, multiply the text score at query time.
 
 ## Results so far
 
@@ -65,13 +67,26 @@ this repository, see [SETUP.md](SETUP.md).
 
 | Scorer            | nDCG@10   | P@5       | P@10      | R@10      | R@100     | F1@10     | MRR@10    | MAP       |
 | ----------------- | --------- | --------- | --------- | --------- | --------- | --------- | --------- | --------- |
-| TF-IDF (baseline) | 0.632     | 0.156     | 0.086     | 0.785     | 0.904     | 0.153     | 0.591     | 0.583     |
-| BM25              | **0.671** | **0.162** | **0.090** | **0.813** | **0.913** | **0.160** | **0.632** | **0.626** |
+| TF-IDF (baseline) | 0.659     | 0.161     | 0.088     | 0.802     | 0.913     | 0.156     | 0.620     | 0.614     |
+| BM25              | 0.685     | 0.163     | 0.091     | 0.824     | **0.925** | 0.162     | 0.645     | 0.641     |
+| BM25F             | **0.693** | **0.164** | **0.091** | **0.827** | **0.925** | **0.163** | **0.656** | **0.650** |
 
-BM25 beats TF-IDF on every metric, and its nDCG@10 is in line with the 0.665
-published for Lucene BM25 in the BEIR paper. Precision@10 looks low because 277
-of the 300 queries have exactly one relevant document, so the best possible
-score on this set is 0.113.
+BM25F matches or beats BM25, and BM25 beats TF-IDF, on every metric. Both BM25
+scorers are above the 0.665 published for Lucene BM25 in the BEIR paper. Precision@10 looks
+low because 277 of the 300 queries have exactly one relevant document, so the
+best possible score on this set is 0.113.
+
+On BEIR TREC-COVID (171,331 documents, 50 queries) nDCG@10 is 0.663 with BM25
+and 0.685 with BM25F, against 0.656 published for BM25. It first measured 0.303:
+the queries were split differently from the documents, so `COVID-19` never
+matched, and nDCG used exponential gain where `trec_eval` uses linear.
+
+**PageRank** lowered MRR@10 at every weight on a crawl of three documentation
+sites (2,424 pages), because inside a site the best-linked pages are the indexes
+in every navigation bar. On a crawl of 1,096 independent sites, ranking sites
+instead of pages raised home-page finding from 0.565 to 0.775. A control that
+gave every home page the same boost, with no links at all, reached 0.851, so
+most of that gain is preferring home pages. Link authority stays off by default.
 
 **Time and memory** on Simple English Wikipedia (278,214 articles, 425 MB of
 text, 1.44 million distinct terms). Query figures are 25 keyword, boolean and
@@ -86,29 +101,19 @@ phrase queries, 5 runs each, with the index already in memory.
 | Query latency p50 / p95 / p99              | 4.1 / 41.7 / 46.0 ms (p50 with snippets: 6.2 ms) |
 
 The serial merge takes 4.3 s of the 15.5 s build, which is why 8 threads give
-2.8x and not more. Peak build memory is 2.6 GB for a 425 MB corpus, which is why
-the block-based build is next.
+2.8x and not more.
 
 ## Status
 
-Most of the system works: importers, text analysis, the compressed positional
-index with parallel build and mmap loading, boolean and phrase queries, TF-IDF
-and BM25 ranking with snippets, BEIR evaluation, the crawler, and PageRank as a
-separate step.
+Done: importers, text analysis, the compressed positional index with parallel
+build and mmap loading, boolean and phrase queries, TF-IDF, BM25 and BM25F
+ranking with snippets, BEIR evaluation on SciFact and TREC-COVID, a parallel
+crawler run against real sites, PageRank mixed into the text score, spelling
+correction and autocomplete, and a browser front end.
 
-Still to do before the final submission:
-
-- Crawl a few thousand real pages from sites whose robots.txt allows it.
-- Mix PageRank into the BM25 score.
-- A block-based external build, checked byte for byte against the in-memory
-  build.
-- A TREC-COVID evaluation, compared with the published BEIR BM25 numbers.
-
-Stretch objectives, none started yet: spelling correction (BK-tree) and
-autocomplete (trie) in the REPL, BM25F-style title weighting, incremental
-re-indexing by content hash, and a small HTTP front end for the demo. WAND
-pruning for OR queries only if profiling shows scoring and not decoding is the
-cost.
+Not done: a block-based build for indexes larger than memory, incremental
+re-indexing by content hash, and WAND pruning for OR queries, which is only
+worth it if profiling shows scoring and not decoding is the cost.
 
 ## Who did what
 
