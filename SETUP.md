@@ -296,7 +296,68 @@ Other scorers:
 
 This gives `ndcg_at_10 0.6925`. `--scorer tfidf` gives the baseline.
 
-TREC-COVID works the same way: replace `scifact` with `trec-covid` in every command above. It is 74 MB and 171,331 documents, and scores 0.6632 with BM25 and 0.6853 with BM25F, against a published 0.656.
+To get precision and the other metrics at 5 instead of 10, add `--cutoff 5`:
+
+```bash
+./build/search evaluate --cutoff 5 corpus/beir/scifact.idx corpus/beir/scifact/queries.jsonl corpus/beir/scifact/qrels/test.tsv
+```
+
+### TREC-COVID
+
+TREC-COVID is larger (74 MB download, 171,331 documents, 50 test queries). The steps are the same as for SciFact.
+
+```bash
+mkdir -p corpus/beir && curl -L -o corpus/beir/trec-covid.zip https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/trec-covid.zip
+```
+
+```bash
+unzip -o -q corpus/beir/trec-covid.zip -d corpus/beir
+```
+
+```bash
+./build/search beir-import corpus/beir/trec-covid/corpus.jsonl corpus/beir/trec-covid.corpus
+```
+
+```bash
+./build/search index-write corpus/beir/trec-covid.corpus corpus/beir/trec-covid.idx
+```
+
+```bash
+./build/search evaluate corpus/beir/trec-covid.idx corpus/beir/trec-covid/queries.jsonl corpus/beir/trec-covid/qrels/test.tsv
+```
+
+```
+queries 50
+unjudged 0
+scorer bm25
+cutoff 10
+ndcg_at_10 0.6632
+precision_at_10 0.6960
+max_precision_at_10 1.0000
+recall_at_10 0.0182
+f1_at_10 0.0352
+mrr_at_10 0.9008
+map 0.1980
+r_precision 0.3310
+recall_at_100 0.1281
+```
+
+BEIR publishes 0.656 for BM25 on TREC-COVID. With `--scorer bm25f` the score is `ndcg_at_10 0.6853`, and with `--scorer tfidf` it is 0.5534.
+
+The precision and recall pattern is the opposite of SciFact's. Each TREC-COVID query has hundreds of relevant documents, so precision is high and recall at 10 or 100 is low, because 100 results can only cover a fraction of them.
+
+All metrics for both datasets:
+
+| Dataset    | Scorer | nDCG@10 | P@5    | P@10   | R@10   | R@100  | F1@10  | MRR@10 | MAP    |
+| ---------- | ------ | ------- | ------ | ------ | ------ | ------ | ------ | ------ | ------ |
+| SciFact    | TF-IDF | 0.6586  | 0.1607 | 0.0877 | 0.8021 | 0.9126 | 0.1564 | 0.6198 | 0.6135 |
+| SciFact    | BM25   | 0.6845  | 0.1627 | 0.0910 | 0.8239 | 0.9249 | 0.1619 | 0.6449 | 0.6407 |
+| SciFact    | BM25F  | 0.6925  | 0.1640 | 0.0913 | 0.8273 | 0.9249 | 0.1625 | 0.6558 | 0.6496 |
+| TREC-COVID | TF-IDF | 0.5534  | 0.6040 | 0.6140 | 0.0160 | 0.1153 | 0.0308 | 0.7840 | 0.1696 |
+| TREC-COVID | BM25   | 0.6632  | 0.7520 | 0.6960 | 0.0182 | 0.1281 | 0.0352 | 0.9008 | 0.1980 |
+| TREC-COVID | BM25F  | 0.6853  | 0.7800 | 0.7380 | 0.0193 | 0.1284 | 0.0373 | 0.8857 | 0.1999 |
+
+P@5 comes from a run with `--cutoff 5`. Every other column comes from the default cutoff of 10.
 
 ## Step 10. Crawl the web (optional)
 
