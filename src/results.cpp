@@ -47,11 +47,19 @@ std::optional<std::vector<QueryResult>> run_query(
     lex_query(query, tokens, ignored);
 
     std::vector<std::string> terms;
+    std::vector<std::string> bare_terms;
+    std::vector<std::string> phrases;
     std::size_t words = 0;
     for (const QueryToken& token : tokens) {
         if (token.kind == QueryTokenKind::Term || token.kind == QueryTokenKind::Phrase) {
             for (const std::string& term : query_terms({token.text})) {
                 terms.push_back(term);
+                if (token.kind == QueryTokenKind::Term) {
+                    bare_terms.push_back(term);
+                }
+            }
+            if (token.kind == QueryTokenKind::Phrase) {
+                phrases.push_back(token.text);
             }
             words += count_words(token.text);
         }
@@ -92,8 +100,8 @@ std::optional<std::vector<QueryResult>> run_query(
             if (doc.has_value()) {
                 SnippetOptions snippet_options;
                 snippet_options.max_chars = options.snippet_chars;
-                result.snippet = make_snippet(doc->title + "\n\n" + doc->body, terms,
-                                              snippet_options);
+                result.snippet = make_snippet(doc->title + "\n\n" + doc->body, bare_terms,
+                                              phrases, snippet_options);
             }
         }
 

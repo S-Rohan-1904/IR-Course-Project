@@ -13,3 +13,6 @@ struct SnippetOptions {
 
 std::string make_snippet(std::string_view text, const std::vector<std::string>& terms,
                          const SnippetOptions& options);
+
+std::string make_snippet(std::string_view text, const std::vector<std::string>& terms,
+                         const std::vector<std::string>& phrases, const SnippetOptions& options);
